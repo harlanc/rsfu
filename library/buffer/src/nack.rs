@@ -1,5 +1,6 @@
 use rtcp::transport_feedbacks::transport_layer_nack::NackPair;
 
+
 pub const MAX_NACK_TIMES: u8 = 3;
 pub struct Nack {
     seq_number: u32,
@@ -57,42 +58,86 @@ impl NackQueue {
 
         None
     }
+    // wireshark package:
+    // 0x2450 ffff 2461 ffff
+    // RTCP Transport Feedback NACK PID: 9296
+    // RTCP Transport Feedback NACK BLP: 0xffff (Frames 9297 9298 9299 9300 9301 9302 9303 9304 9305 9306 9307 9308 9309 9310 9311 9312 lost)
+    // RTCP Transport Feedback NACK PID: 9313
+    // RTCP Transport Feedback NACK BLP: 0xffff (Frames 9314 9315 9316 9317 9318 9319 9320 9321 9322 9323 9324 9325 9326 9327 9328 9329 lost)
 
     pub fn pairs(&mut self, head_seq_number: u32) -> (Option<Vec<NackPair>>, bool) {
         if self.nacks.len() == 0 {
             return (None, false);
         }
 
+        let mut np = NackPair {
+            packet_id: 0,
+            lost_packets: 0,
+        };
+        let mut nps: Vec<NackPair> = Vec::new();
+
         let mut ask_key_frame: bool = false;
 
-        for v in &self.nacks {
+        let mut idx = 0 as usize;
+        while idx < self.nacks.len() {
+            let v = &mut self.nacks[idx];
+
             if v.nackd >= MAX_NACK_TIMES {
                 if v.seq_number > self.key_frame_seq_number {
                     self.key_frame_seq_number = v.seq_number;
                     ask_key_frame = true;
                 }
+
+                self.nacks.remove(idx);
                 continue;
             }
 
-            if v.seq_number >= head_seq_number - 2 {}
+            idx = idx + 1;
+
+            if v.seq_number >= head_seq_number - 2 {
+                continue;
+            }
+
+            v.nackd = v.nackd + 1;
+
+            if np.packet_id == 0 || v.seq_number as u16 > np.packet_id + 16 {
+                if np.packet_id != 0 {
+                    nps.push(np.clone());
+                }
+
+                np.packet_id = v.seq_number as u16;
+                np.lost_packets = 0;
+
+                continue;
+            }
+
+            np.lost_packets = np.lost_packets | (1 << v.seq_number as u16 - np.packet_id - 1);
         }
 
-        (None, false)
+        if np.packet_id != 0 {
+            nps.push(np);
+        }
+
+        (Some(nps), ask_key_frame)
     }
 }
 
 #[cfg(test)]
 mod tests {
 
+    use crate::nack;
+
     use super::NackQueue;
+    use rtcp::transport_feedbacks::transport_layer_nack::NackPair;
 
     #[test]
     fn test_nack_queue_push() {
         let mut nack_queue = NackQueue::new();
-        nack_queue.push(3);
-        nack_queue.push(4);
-        nack_queue.push(2);
-        nack_queue.push(36);
+
+        let seqs = vec![3, 4, 2, 36];
+        for v in seqs {
+            nack_queue.push(v);
+        }
 
         assert_eq!(2, nack_queue.nacks[0].seq_number);
         assert_eq!(3, nack_queue.nacks[1].seq_number);
@@ -103,10 +148,10 @@ mod tests {
     #[test]
     fn test_nack_queue_remove() {
         let mut nack_queue = NackQueue::new();
-        nack_queue.push(3);
-        nack_queue.push(4);
-        nack_queue.push(2);
-        nack_queue.push(36);
+        let seqs = vec![3, 4, 2, 36];
+        for v in seqs {
+            nack_queue.push(v);
+        }
 
         nack_queue.remove(4);
 
@@ -118,5 +163,45 @@ mod tests {
 
         assert_eq!(2, nack_queue.nacks[0].seq_number);
         assert_eq!(36, nack_queue.nacks[1].seq_number);
+    }
+
+    #[test]
+    fn test_nack_queue_pairs() {
+        let mut nack_queue = NackQueue::new();
+
+        let seqs = vec![1, 2, 4, 5];
+        for v in seqs {
+            nack_queue.push(v);
+        }
+        let (pairs, _) = nack_queue.pairs(30);
+
+        let np = NackPair {
+            packet_id: 1,
+            lost_packets: 13,
+        };
+
+        assert_eq!(pairs, Some(vec![np]));
+    }
+
+    #[test]
+    fn test_nack_queue_pairs2() {
+        let mut nack_queue = NackQueue::new();
+
+        let seqs = vec![1, 2, 4, 5, 20, 22, 24, 27];
+        for v in seqs {
+            nack_queue.push(v);
+        }
+        let (pairs, _) = nack_queue.pairs(30);
+
+        let np = NackPair {
+            packet_id: 1,
+            lost_packets: 13,
+        };
+        let np2 = NackPair {
+            packet_id: 20,
+            lost_packets: 74,
+        };
+
+        assert_eq!(pairs, Some(vec![np, np2]));
     }
 }
