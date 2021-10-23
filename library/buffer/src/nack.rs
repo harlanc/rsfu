@@ -1,7 +1,8 @@
 use rtcp::transport_feedbacks::transport_layer_nack::NackPair;
 
-
 pub const MAX_NACK_TIMES: u8 = 3;
+
+#[derive(Debug, Eq, PartialEq, Default, Clone)]
 pub struct Nack {
     seq_number: u32,
     nackd: u8,
@@ -14,6 +15,7 @@ impl Nack {
 }
 
 use rtcp::receiver_report::ReceiverReport;
+#[derive(Debug, Eq, PartialEq, Default, Clone)]
 pub struct NackQueue {
     nacks: Vec<Nack>,
     key_frame_seq_number: u32,

@@ -13,6 +13,7 @@ edition = "2018"
 [dependencies]
 rtcp = "0.4.1"
 rtp = "0.6.0"
+webrtc = "0.2.0"
 byteorder = "1.4.2"
 thiserror = "1.0.25"
 anyhow = "1.0.41"

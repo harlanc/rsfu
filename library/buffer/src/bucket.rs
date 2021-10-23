@@ -6,6 +6,15 @@ use anyhow::Result;
 use byteorder::{BigEndian, ByteOrder, WriteBytesExt};
 
 const MAX_PACKET_SIZE: usize = 1500;
+
+fn distance(arg1: u16, arg2: u16) -> u16 {
+    if arg1 < arg2 {
+        65535 - arg2 + arg1
+    } else {
+        arg1 - arg2
+    }
+}
+#[derive(Debug, Eq, PartialEq, Default, Clone)]
 pub struct Bucket {
     buf: Vec<u8>,
     src: Vec<u8>,
@@ -17,18 +26,18 @@ pub struct Bucket {
 }
 
 impl Bucket {
-    pub fn new(buf : &[u8]) -> Self {
+    pub fn new(buf: &[u8]) -> Self {
         Self {
             buf: buf.to_vec(),
             src: Vec::new(),
             init: false,
             step: 0,
             headSN: 0,
-            maxSteps: 0,
+            maxSteps: (buf.len() / MAX_PACKET_SIZE) as i32 - 1,
         }
     }
 
-    fn add_packet(&mut self, pkt: &[u8], sn: u16, latest: bool) -> Result<Vec<u8>> {
+    pub fn add_packet(&mut self, pkt: &[u8], sn: u16, latest: bool) -> Result<Vec<u8>> {
         if !self.init {
             self.headSN = sn - 1;
             self.init = true;
@@ -38,8 +47,7 @@ impl Bucket {
             return self.set(sn, pkt);
         }
 
-        let diff = sn - self.headSN;
-
+        let diff: u16 = distance(sn, self.headSN);
         self.headSN = sn;
 
         for _ in 1..diff {
@@ -49,12 +57,15 @@ impl Bucket {
             }
         }
 
-        Ok(self.push(pkt))
+        self.push(pkt)
     }
 
-    fn push(&mut self, pkt: &[u8]) -> Vec<u8> {
+    fn push(&mut self, pkt: &[u8]) -> Result<Vec<u8>> {
         let pkt_len = pkt.len();
         let pkt_len_idx = self.step as usize * MAX_PACKET_SIZE;
+        if self.buf.capacity() < pkt_len_idx + pkt_len {
+            return Err(Error::ErrBufferTooSmall.into());
+        }
         BigEndian::write_u16(&mut self.buf[pkt_len_idx..], pkt_len as u16);
 
         let off = pkt_len_idx + 2;
@@ -67,11 +78,13 @@ impl Bucket {
             self.step = 0;
         }
 
-        self.buf[off..off + pkt_len].to_vec()
+        Ok(self.buf[off..off + pkt_len].to_vec())
     }
 
-    fn get(&mut self, sn: u16) -> Option<Vec<u8>> {
-        let mut pos = self.step - (self.headSN - sn + 1) as i32;
+    pub fn get(&mut self, sn: u16) -> Option<Vec<u8>> {
+        let diff: u16 = distance(self.headSN, sn);
+
+        let mut pos = self.step - (diff + 1) as i32;
         if pos < 0 {
             if pos * -1 > self.maxSteps + 1 {
                 return None;
@@ -95,10 +108,11 @@ impl Bucket {
     }
 
     fn set(&mut self, sn: u16, pkt: &[u8]) -> Result<Vec<u8>> {
-        if self.headSN - sn >= self.maxSteps as u16 + 1 {
+        let diff: u16 = distance(self.headSN, sn);
+        if diff >= self.maxSteps as u16 + 1 {
             return Err(Error::ErrPacketTooOld.into());
         }
-        let mut pos = self.step - (self.headSN - sn + 1) as i32;
+        let mut pos = self.step - (diff + 1) as i32;
         if pos < 0 {
             pos = self.maxSteps + pos + 1
         }
