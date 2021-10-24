@@ -138,4 +138,18 @@ mod tests {
         assert!(!p.is_err(), "unmarshal is OK");
         assert_eq!(p.unwrap().header.sequence_number, 65535);
     }
+
+    use byteorder::{BigEndian, ByteOrder, WriteBytesExt};
+
+    #[test]
+    fn test_bigend_bytes() {
+        let xs: [u8; 2] = [4, 5];
+
+        let sn = BigEndian::read_u16(&xs);
+
+        print!("value:{}\n",sn);
+        print!("value2:{}\n",4<<8 | 5);
+
+
+    }
 }
