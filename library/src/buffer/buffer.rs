@@ -1,7 +1,10 @@
 use super::helpers;
+use crate::buffer::errors::*;
 use bytes::Buf;
 use rtcp::packet::Packet as RtcpPacket;
 use rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
+use rtcp::payload_feedbacks::receiver_estimated_maximum_bitrate::ReceiverEstimatedMaximumBitrate;
+use rtcp::reception_report::ReceptionReport;
 use rtcp::transport_feedbacks::transport_layer_nack::TransportLayerNack;
 use rtp::extension::audio_level_extension::AudioLevelExtension;
 use rtp::packet::Packet;
@@ -17,13 +20,16 @@ use std::borrow::BorrowMut;
 use std::collections::VecDeque;
 use std::isize::MAX;
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use tokio::time::{sleep, Duration};
+
 use super::helpers::VP8;
 
-use crate::errors::*;
 use byteorder::{BigEndian, ByteOrder, WriteBytesExt};
 use bytes::{BufMut, BytesMut};
 
-use crate::{bucket::Bucket, nack::NackQueue};
+use crate::{buffer::bucket::Bucket, buffer::nack::NackQueue};
 
 const MAX_SEQUENCE_NUMBER: u32 = 1 << 16;
 const REPORT_DELTA: f64 = 1e9;
@@ -31,7 +37,7 @@ const REPORT_DELTA: f64 = 1e9;
 #[derive(Debug, Eq, PartialEq, Default, Clone)]
 struct PendingPackets {
     arrival_time: u64,
-    packet: Vec<u8>,
+    pub packet: Vec<u8>,
 }
 #[derive(Debug, Eq, PartialEq, Default, Clone)]
 struct ExtPacket {
@@ -57,7 +63,7 @@ struct Options {
 }
 #[derive(Debug, PartialEq, Default, Clone)]
 struct Buffer {
-    bucket: Bucket,
+    bucket: Option<Bucket>,
     nacker: Option<NackQueue>,
 
     codec_type: RTPCodecType,
@@ -70,6 +76,7 @@ struct Buffer {
     twcc_ext: u8,
     audio_ext: u8,
     bound: bool,
+    closed: bool,
     mime: String,
 
     // supported feedbacks
@@ -84,7 +91,7 @@ struct Buffer {
     max_temporal_layer: i32,
     bitrate: u64,
     bitrate_helper: u64,
-    last_rtntp_time: u64,
+    last_srntp_time: u64,
     last_srrtp_time: u32,
     last_sr_recv: i64, // Represents wall clock of the most recent sender report arrival
     base_sn: u16,
@@ -160,22 +167,24 @@ impl Buffer {
             }
         }
 
-        let packet: Packet;
+        let mut packet: Packet = Packet::default();
 
-        let rv = self.bucket.add_packet(pkt, sn, sn == self.max_seq_no);
+        if let Some(bucket) = &mut self.bucket {
+            let rv = bucket.add_packet(pkt, sn, sn == self.max_seq_no);
 
-        match rv {
-            Ok(data) => match Packet::unmarshal(&mut &data[..]) {
+            match rv {
+                Ok(data) => match Packet::unmarshal(&mut &data[..]) {
+                    Err(_) => {
+                        return;
+                    }
+                    Ok(p) => {
+                        packet = p;
+                    }
+                },
                 Err(_) => {
+                    //  if Error::ErrRTXPacket.equal(&rv) {
                     return;
                 }
-                Ok(p) => {
-                    packet = p;
-                }
-            },
-            Err(_) => {
-                //  if Error::ErrRTXPacket.equal(&rv) {
-                return;
             }
         }
 
@@ -326,10 +335,10 @@ impl Buffer {
 
         if self.mime.starts_with("audio/") {
             self.codec_type = RTPCodecType::Audio;
-            self.bucket = Bucket::new(&self.audio_pool[..]);
+            self.bucket = Some(Bucket::new(&self.audio_pool[..]));
         } else if self.mime.starts_with("video/") {
             self.codec_type = RTPCodecType::Video;
-            self.bucket = Bucket::new(&self.audio_pool[..]);
+            self.bucket = Some(Bucket::new(&self.audio_pool[..]));
         } else {
             self.codec_type = RTPCodecType::Unspecified;
         }
@@ -390,6 +399,195 @@ impl Buffer {
         }
 
         self.calc(pkt, Instant::now().elapsed().subsec_nanos() as i64);
+    }
+
+    fn read(&mut self, buff: &mut [u8]) -> Result<usize> {
+        if self.closed {
+            return Err(Error::ErrIOEof.into());
+        }
+
+        let mut n: usize = 0;
+
+        if self.pending_packets.len() > self.last_packet_read as usize {
+            if buff.len()
+                < self
+                    .pending_packets
+                    .get(self.last_packet_read as usize)
+                    .unwrap()
+                    .packet
+                    .len()
+            {
+                return Err(Error::ErrBufferTooSmall.into());
+            }
+
+            let packet = &self
+                .pending_packets
+                .get(self.last_packet_read as usize)
+                .unwrap()
+                .packet;
+
+            n = packet.len();
+
+            buff.copy_from_slice(&packet[..]);
+            return Ok(n);
+        }
+
+        Ok(n)
+    }
+
+    async fn read_extended(&mut self) -> Result<ExtPacket> {
+        loop {
+            if self.closed {
+                return Err(Error::ErrIOEof.into());
+            }
+
+            if self.ext_packets.len() > 0 {
+                let ext_pkt = self.ext_packets.pop_front().unwrap();
+                return Ok(ext_pkt);
+            }
+
+            sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    fn close(&mut self) {
+        if self.bucket.is_some() && self.codec_type == RTPCodecType::Video {}
+    }
+
+    fn build_remb_packet(&mut self) -> ReceiverEstimatedMaximumBitrate {
+        let mut br = self.bitrate;
+
+        if self.stats.lost_rate < 0.02 {
+            br = (br as f64 * 1.09) as u64 + 2000;
+        }
+
+        if self.stats.lost_rate > 0.1 {
+            br = (br as f64 * (1.0 - 0.5 * self.stats.lost_rate) as f64) as u64;
+        }
+
+        if br > self.max_bitrate {
+            br = self.max_bitrate;
+        }
+
+        if br < 100000 {
+            br = 100000;
+        }
+
+        self.stats.total_byte = 0;
+
+        return ReceiverEstimatedMaximumBitrate {
+            bitrate: br,
+            ssrcs: vec![self.media_ssrc],
+            ..Default::default()
+        };
+    }
+
+    fn build_reception_report(&mut self) -> ReceptionReport {
+        let ext_max_seq = self.cycles | self.max_seq_no as u32;
+        let expected = ext_max_seq - self.base_sn as u32 + 1;
+        let mut lost: u32 = 0;
+
+        if self.stats.packet_count < expected && self.stats.packet_count != 0 {
+            lost = expected - self.stats.packet_count;
+        }
+
+        let expected_interval = expected - self.stats.last_expected;
+        self.stats.last_expected = expected;
+
+        let received_interval = self.stats.packet_count - self.stats.last_received;
+        self.stats.last_received = self.stats.packet_count;
+
+        let lost_interval = expected_interval - received_interval;
+
+        self.stats.lost_rate = lost_interval as f32 / expected_interval as f32;
+
+        let mut frac_lost: u8 = 0;
+        if expected_interval != 0 && lost_interval > 0 {
+            frac_lost = ((lost_interval << 8) / expected_interval) as u8;
+        }
+
+        let mut dlsr: u32 = 0;
+
+        if self.last_sr_recv != 0 {
+            let delay_ms = ((Instant::now().elapsed().subsec_nanos() - self.last_sr_recv as u32)
+                as f64
+                / 1e6) as u32;
+
+            dlsr = ((delay_ms as f32 / 1e3) as u32) << 16;
+
+            dlsr |= (delay_ms as f32 % 1e3) as u32 * 65536 / 1000;
+        }
+
+        ReceptionReport {
+            ssrc: self.media_ssrc,
+            fraction_lost: frac_lost,
+            total_lost: lost,
+            last_sequence_number: ext_max_seq,
+            jitter: self.stats.jitter as u32,
+            last_sender_report: self.last_srrtp_time >> 16,
+            delay: dlsr,
+        }
+    }
+
+    fn set_sender_report_data(&mut self, rtp_time: u32, ntp_time: u64) {
+        self.last_srrtp_time = rtp_time;
+        self.last_srntp_time = ntp_time;
+        self.last_sr_recv = Instant::now().elapsed().subsec_nanos() as i64;
+    }
+
+    fn get_rtcp(&mut self) -> Vec<Box<dyn RtcpPacket>> {
+        let mut rtcp_packets: Vec<Box<dyn RtcpPacket>> = Vec::new();
+        rtcp_packets.push(Box::new(self.build_reception_report()));
+
+        if self.remb && !self.twcc {
+            rtcp_packets.push(Box::new(self.build_remb_packet()));
+        }
+
+        rtcp_packets
+    }
+
+    fn get_packet(&mut self, buff: &mut [u8], sn: u16) -> Result<usize> {
+        if self.closed {
+            return Err(Error::ErrIOEof.into());
+        }
+
+        if let Some(bucket) = &self.bucket {
+            return bucket.get_packet(buff, sn);
+        }
+
+        Ok(0)
+    }
+
+    fn bitrate(&self) -> u64 {
+        self.bitrate
+    }
+
+    fn max_temporal_layer(&self) -> i32 {
+        self.max_temporal_layer
+    }
+
+    fn get_media_ssrc(&self) -> u32 {
+        self.media_ssrc
+    }
+
+    fn get_clock_rate(&self) -> u32 {
+        self.clock_rate
+    }
+
+    fn get_sender_report_data(&self) -> (u32, u64, i64) {
+        (
+            self.last_srrtp_time,
+            self.last_srntp_time,
+            self.last_sr_recv,
+        )
+    }
+
+    fn get_status(&self) -> Stats {
+        self.stats.clone()
+    }
+
+    fn get_latest_timestamp(&self) -> (u32, i64) {
+        (self.latest_timestamp, self.latest_timestamp_time)
     }
 }
 

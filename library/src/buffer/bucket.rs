@@ -1,6 +1,6 @@
 use std::io::Write;
 
-use crate::errors::*;
+use crate::buffer::errors::*;
 
 use anyhow::Result;
 use byteorder::{BigEndian, ByteOrder, WriteBytesExt};
@@ -60,6 +60,26 @@ impl Bucket {
         self.push(pkt)
     }
 
+    pub fn get_packet(&self, buf: &mut [u8], sn: u16) -> Result<usize> {
+        let p = self.get(sn);
+
+        if p.is_none() {
+            return Err(Error::ErrPacketNotFound.into());
+        }
+
+        let i = p.clone().unwrap().len();
+
+        if buf.len() < i {
+            return Err(Error::ErrBufferTooSmall.into());
+        }
+
+        if let Some(data) = p {
+            buf.copy_from_slice(&data[..]);
+        }
+
+        Ok(i)
+    }
+
     fn push(&mut self, pkt: &[u8]) -> Result<Vec<u8>> {
         let pkt_len = pkt.len();
         let pkt_len_idx = self.step as usize * MAX_PACKET_SIZE;
@@ -81,7 +101,7 @@ impl Bucket {
         Ok(self.buf[off..off + pkt_len].to_vec())
     }
 
-    pub fn get(&mut self, sn: u16) -> Option<Vec<u8>> {
+    pub fn get(&self, sn: u16) -> Option<Vec<u8>> {
         let diff: u16 = distance(self.headSN, sn);
 
         let mut pos = self.step - (diff + 1) as i32;

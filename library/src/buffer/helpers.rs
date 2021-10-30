@@ -1,4 +1,4 @@
-use crate::errors::*;
+use crate::buffer::errors::*;
 use anyhow::Result;
 // VP8 is a helper to get temporal data from VP8 packet header
 /*

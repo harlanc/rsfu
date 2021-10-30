@@ -1,14 +1,14 @@
 #[cfg(test)]
 mod tests {
 
-    use crate::nack;
+    use crate::buffer::nack;
     use rtp::header::Header;
     use rtp::packet::Packet;
 
     use bytes::{Buf, BufMut, Bytes, BytesMut};
     use rtcp::transport_feedbacks::transport_layer_nack::NackPair;
 
-    use crate::bucket::Bucket;
+    use crate::buffer::bucket::Bucket;
 
     use webrtc_util::{Marshal, MarshalSize, Unmarshal};
 
@@ -147,9 +147,7 @@ mod tests {
 
         let sn = BigEndian::read_u16(&xs);
 
-        print!("value:{}\n",sn);
-        print!("value2:{}\n",4<<8 | 5);
-
-
+        print!("value:{}\n", sn);
+        print!("value2:{}\n", 4 << 8 | 5);
     }
 }

@@ -15,6 +15,9 @@ pub enum Error {
     ErrShortPacket,
     #[error("invalid nil packet")]
     ErrNilPacket,
+
+    #[error("io EOF")]
+    ErrIOEof,
 }
 impl Error {
     pub fn equal(&self, err: &anyhow::Error) -> bool {
