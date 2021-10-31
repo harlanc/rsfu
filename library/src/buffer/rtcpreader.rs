@@ -1,12 +1,13 @@
 use crate::buffer::errors::*;
 use anyhow::Result;
+use atomic::Atomic;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
 pub struct RTCPReader {
     ssrc: u32,
     closed: AtomicBool,
 
-    on_packet: AtomicPtr<fn()>,
+    on_packet: Atomic<fn()>,
 
     on_close: fn(),
 }
@@ -18,7 +19,7 @@ impl RTCPReader {
         Self {
             ssrc,
             closed: AtomicBool::new(false),
-            on_packet: AtomicPtr::default(),
+            on_packet: Atomic::new(default),
             on_close: default,
         }
     }
@@ -28,9 +29,8 @@ impl RTCPReader {
             return Err(Error::ErrIOEof.into());
         }
 
-        // if let f = self.on_packet.load(Ordering::Relaxed) {
-        //     f();
-        // }
+        let f = self.on_packet.load(Ordering::Relaxed);
+        f();
 
         Ok(9)
     }

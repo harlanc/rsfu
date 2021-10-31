@@ -127,7 +127,7 @@ impl NackQueue {
 #[cfg(test)]
 mod tests {
 
-    use crate::nack;
+    use crate::buffer::nack;
 
     use super::NackQueue;
     use rtcp::transport_feedbacks::transport_layer_nack::NackPair;
