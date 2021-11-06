@@ -2,12 +2,14 @@ use std::clone;
 use std::fs::OpenOptions;
 
 use bytes::Bytes;
+use rtcp::packet::Packet as RtcpPacket;
 use serde_json::Map;
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::setting_engine::SettingEngine;
 use webrtc::api::APIBuilder;
 use webrtc::api::API;
 use webrtc::data::data_channel::data_channel_message::DataChannelMessage;
+use webrtc::data::data_channel::data_channel_parameters::DataChannelParameters;
 use webrtc::data::data_channel::RTCDataChannel;
 use webrtc::data::sctp_transport::sctp_transport_capabilities::SCTPTransportCapabilities;
 use webrtc::data::sctp_transport::RTCSctpTransport;
@@ -23,10 +25,12 @@ use webrtc::media::rtp::rtp_receiver::RTCRtpReceiver;
 use webrtc::media::rtp::rtp_sender::RTCRtpSender;
 use webrtc::media::rtp::RTCRtpCodingParameters;
 use webrtc::media::rtp::RTCRtpReceiveParameters;
+
 use webrtc::media::track::track_local::TrackLocal;
 use webrtc::media::track::track_remote::TrackRemote;
 use webrtc::peer::ice::ice_candidate::RTCIceCandidate;
 use webrtc::peer::ice::ice_gather::ice_gatherer::RTCIceGatherer;
+use webrtc::peer::ice::ice_gather::ice_gatherer_state::RTCIceGathererState;
 use webrtc::peer::ice::ice_gather::RTCIceGatherOptions;
 use webrtc::peer::ice::ice_server::RTCIceServer;
 
@@ -161,11 +165,14 @@ pub struct Peer {
     on_request_handler: Arc<Mutex<Option<OnPeerRequestFn>>>,
     on_data_channel_handler: Arc<Mutex<Option<OnPeerDataChannelFn>>>,
     on_track_handler: Arc<Mutex<Option<OnPeerTrackFn>>>,
+
+    on_data_channel_callback_handler: Arc<Mutex<fn(&RTCDataChannel)>>,
 }
 use std::rc::Rc;
+
+fn on_data_channel_callback(channel: &RTCDataChannel) {}
 impl Peer {
-    fn set_handlers(&mut self) {}
-    async fn new(meta: PeerMeta, conf: PeerConfig) -> Result<Self> {
+    fn new(meta: PeerMeta, conf: PeerConfig) -> Result<Self> {
         let ice_options = RTCIceGatherOptions {
             ice_servers: conf.ice_servers,
             ..Default::default()
@@ -186,7 +193,9 @@ impl Peer {
         // Construct the SCTP transport
         let sctp = Arc::new(api.new_sctp_transport(Arc::clone(&dtls))?);
 
-        let mut p = Self {
+        let signaling_dc = Arc::new(RTCDataChannel::default());
+
+        let p = Self {
             media_engine: Arc::new(Mutex::new(MediaEngine::default())),
             api: Arc::new(api),
             ice_transport: ice,
@@ -200,7 +209,7 @@ impl Peer {
             pending_requests: HashMap::new(),
             local_tracks: None,
 
-            signaling_dc: Arc::new(RTCDataChannel::default()),
+            signaling_dc: Arc::clone(&signaling_dc),
             ice_gatherer: gatherer,
             dc_index: 0,
 
@@ -209,40 +218,57 @@ impl Peer {
             on_ready_handler: Arc::new(Mutex::new(None)),
             on_track_handler: Arc::new(Mutex::new(None)),
             on_request_handler: Arc::new(Mutex::new(None)),
+
+            on_data_channel_callback_handler: Arc::new(Mutex::new(on_data_channel_callback)),
         };
 
-        let mut arc_p = Arc::new(&p);
-
-        let on_ready_handler = Arc::clone(&p.on_ready_handler);
-        sctp.on_data_channel(Box::new(move |d: Arc<RTCDataChannel>| {
-            if d.label() == SIGNALER_LABEL {
-                arc_p.signaling_dc = Arc::clone(&d);
-                let on_ready_handler2 = Arc::clone(&on_ready_handler);
-                Box::pin(async move {
-                    d.on_open(Box::new(move || {
-                        let on_ready_handler3 = Arc::clone(&on_ready_handler2);
-                        Box::pin(async move {
-                            let mut handler = on_ready_handler3.lock().await;
-                            if let Some(f) = &mut *handler {
-                                f().await;
-                            }
-                        })
-                    }))
-                    .await;
-                    // d.on_message(Box::new(move |d: DataChannelMessage| {
-                    //     Box::pin(async move {
-                    //         p.handle_request(d).await;
-                    //     })
-                    // }))
-                    // .await;
-                })
-            } else {
-                Box::pin(async {})
-            }
-        }))
-        .await;
-
         Ok(p)
+    }
+    async fn init(&mut self, meta: PeerMeta, conf: PeerConfig) {
+        //let mut data_channel: Arc<RTCDataChannel> = Arc::new(RTCDataChannel::default());
+
+        let on_ready_handler = Arc::clone(&self.on_ready_handler);
+
+        // let mut signaling_dc = Arc::clone(&self.signaling_dc);
+
+        self.sctp_transport
+            .on_data_channel(Box::new(move |d: Arc<RTCDataChannel>| {
+                if d.label() == SIGNALER_LABEL {
+                    // let dc = signaling_dc.lock().await;
+
+                    // let val = Arc::try_unwrap(d);
+
+                    // let d2 = Arc::clone(&d);
+
+                    // signaling_dc = Arc::new(Mutex::new(val));
+
+                    // self.signaling_dc = Arc::clone(&d);
+
+                    let on_ready_handler2 = Arc::clone(&on_ready_handler);
+                    Box::pin(async move {
+                        d.on_open(Box::new(move || {
+                            Box::pin(async move {
+                                let mut handler = on_ready_handler2.lock().await;
+                                if let Some(f) = &mut *handler {
+                                    f().await;
+                                }
+                            })
+                        }))
+                        .await;
+                        d.on_message(Box::new(move |d: DataChannelMessage| {
+                            Box::pin(async move {
+                                //  self.handle_request(d).await;
+                            })
+                        }))
+                        .await;
+                    })
+                } else {
+                    Box::pin(async {})
+                }
+            }))
+            .await;
+
+        //  Ok(p)
     }
 
     async fn handle_request(&mut self, msg: DataChannelMessage) -> Result<()> {
@@ -276,6 +302,182 @@ impl Peer {
             }
         }
 
+        Ok(())
+    }
+
+    fn id(&self) -> String {
+        self.peer_meta.peer_id.clone()
+    }
+    // Offer is used for establish the connection of the local relay Peer
+    // with the remote relay Peer.
+    //
+    // If connection is successful OnReady handler will be called
+    async fn offer(
+        &mut self,
+        signalFn: fn(meta: PeerMeta, singal: &str) -> Result<String>,
+    ) -> Result<()> {
+        if self.ice_gatherer.state() != RTCIceGathererState::New {
+            return Err(Error::ErrRelayPeerSignalDone.into());
+        }
+
+        let (gather_finished_tx, mut gather_finished_rx) = tokio::sync::mpsc::channel::<()>(1);
+        let mut gather_finished_tx = Some(gather_finished_tx);
+        self.ice_gatherer
+            .on_local_candidate(Box::new(move |c: Option<RTCIceCandidate>| {
+                if c.is_none() {
+                    gather_finished_tx.take();
+                }
+                Box::pin(async {})
+            }))
+            .await;
+
+        self.ice_gatherer.gather().await?;
+
+        let _ = gather_finished_rx.recv().await;
+
+        let ice_candidates = self.ice_gatherer.get_local_candidates().await?;
+
+        let ice_parameters = self.ice_gatherer.get_local_parameters().await?;
+
+        let dtls_parameters = self.dtls_transport.get_local_parameters()?;
+
+        let sctp_capabilities = self.sctp_transport.get_capabilities();
+
+        let local_signal = Signal {
+            ice_candidates,
+            ice_parameters,
+            dtls_parameters,
+            sctp_capabilities,
+
+            encodings: None,
+            track_meta: None,
+        };
+
+        self.ice_role = Arc::new(RTCIceRole::Controlling);
+        let json_str = serde_json::to_string(&local_signal)?;
+
+        let data = signalFn(self.peer_meta.clone(), &json_str)?;
+
+        let remote_signal = serde_json::from_str::<Signal>(&data)?;
+
+        self.start(remote_signal).await?;
+
+        self.signaling_dc = Arc::new(self.create_data_channel(SIGNALER_LABEL.to_string()).await?);
+
+        let on_ready_handler2 = Arc::clone(&self.on_ready_handler);
+
+        self.signaling_dc
+            .on_open(Box::new(move || {
+                Box::pin(async move {
+                    let mut handler = on_ready_handler2.lock().await;
+                    if let Some(f) = &mut *handler {
+                        f().await;
+                    }
+                })
+            }))
+            .await;
+
+        //self.signaling_dc.on_message(f)
+
+        Ok(())
+    }
+
+    pub async fn on_close(&self, f: OnPeerCloseFn) {
+        let mut handler = self.on_close_handler.lock().await;
+        *handler = Some(f);
+    }
+
+    pub async fn answer(&mut self, request: String) -> Result<String> {
+        if self.ice_gatherer.state() != RTCIceGathererState::New {
+            return Err(Error::ErrRelayPeerSignalDone.into());
+        }
+        let (gather_finished_tx, mut gather_finished_rx) = tokio::sync::mpsc::channel::<()>(1);
+        let mut gather_finished_tx = Some(gather_finished_tx);
+        self.ice_gatherer
+            .on_local_candidate(Box::new(move |c: Option<RTCIceCandidate>| {
+                if c.is_none() {
+                    gather_finished_tx.take();
+                }
+                Box::pin(async {})
+            }))
+            .await;
+
+        self.ice_gatherer.gather().await?;
+
+        let _ = gather_finished_rx.recv().await;
+
+        let ice_candidates = self.ice_gatherer.get_local_candidates().await?;
+        let ice_parameters = self.ice_gatherer.get_local_parameters().await?;
+        let dtls_parameters = self.dtls_transport.get_local_parameters()?;
+        let sctp_capabilities = self.sctp_transport.get_capabilities();
+
+        let signal = Signal {
+            ice_candidates,
+            ice_parameters,
+            dtls_parameters,
+            sctp_capabilities,
+            encodings: None,
+            track_meta: None,
+        };
+
+        self.ice_role = Arc::new(RTCIceRole::Controlled);
+
+        let signal_2 = serde_json::from_str::<Signal>(&request)?;
+
+        self.start(signal_2).await?;
+
+        let json_str = serde_json::to_string(&signal)?;
+
+        Ok(json_str)
+    }
+
+    async fn write_rtcp(&self, pkt: &(dyn RtcpPacket + Send + Sync)) -> Result<()> {
+        self.dtls_transport.write_rtcp(pkt).await?;
+        Ok(())
+    }
+
+    fn local_tracks(&self) -> Vec<TrackLocal>{
+        self.local_tracks
+    }
+
+    async fn create_data_channel(&mut self, label: String) -> Result<RTCDataChannel> {
+        let idx = self.dc_index;
+
+        self.dc_index += 1;
+        let dc_parameters = DataChannelParameters {
+            label,
+            id: idx,
+            ordered: true,
+            ..Default::default()
+        };
+
+        let rv = self
+            .api
+            .new_data_channel(Arc::clone(&self.sctp_transport), dc_parameters)
+            .await?;
+
+        Ok(rv)
+    }
+
+    async fn start(&mut self, sig: Signal) -> Result<()> {
+        self.ice_transport
+            .set_remote_candidates(&sig.ice_candidates)
+            .await?;
+
+        // Start the ICE transport
+        self.ice_transport
+            .start(&sig.ice_parameters, Some(*self.ice_role))
+            .await?;
+
+        // Start the DTLS transport
+        self.dtls_transport
+            .start(sig.dtls_parameters.clone())
+            .await?;
+
+        // Start the SCTP transport
+        self.sctp_transport.start(sig.sctp_capabilities).await?;
+
+        self.ready = true;
         Ok(())
     }
 

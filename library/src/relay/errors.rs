@@ -11,7 +11,6 @@ pub enum Error {
 
     #[error("relay Peer send data failed")]
     ErrRelaySendDataFailed,
-
 }
 impl Error {
     pub fn equal(&self, err: &anyhow::Error) -> bool {
