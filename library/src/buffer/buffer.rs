@@ -476,7 +476,7 @@ impl Buffer {
         self.stats.total_byte = 0;
 
         return ReceiverEstimatedMaximumBitrate {
-            bitrate: br,
+            bitrate: br as f32,
             ssrcs: vec![self.media_ssrc],
             ..Default::default()
         };

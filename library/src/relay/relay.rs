@@ -2,6 +2,7 @@ use std::clone;
 use std::fs::OpenOptions;
 
 use bytes::Bytes;
+use rand::Rng;
 use rtcp::packet::Packet as RtcpPacket;
 use serde_json::Map;
 use webrtc::api::media_engine::MediaEngine;
@@ -25,14 +26,9 @@ use webrtc::media::rtp::rtp_receiver::RTCRtpReceiver;
 use webrtc::media::rtp::rtp_sender::RTCRtpSender;
 use webrtc::media::rtp::RTCRtpCodingParameters;
 use webrtc::media::rtp::RTCRtpReceiveParameters;
-
+use webrtc::media::rtp::RTCRtpSendParameters;
 use webrtc::media::track::track_local::TrackLocal;
 use webrtc::media::track::track_remote::TrackRemote;
-use webrtc::peer::ice::ice_candidate::RTCIceCandidate;
-use webrtc::peer::ice::ice_gather::ice_gatherer::RTCIceGatherer;
-use webrtc::peer::ice::ice_gather::ice_gatherer_state::RTCIceGathererState;
-use webrtc::peer::ice::ice_gather::RTCIceGatherOptions;
-use webrtc::peer::ice::ice_server::RTCIceServer;
 
 use atomic::Atomic;
 use std::future::Future;
@@ -40,6 +36,13 @@ use std::pin::Pin;
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::mpsc;
+use tokio::time::Duration;
+use webrtc::peer::ice::ice_candidate::RTCIceCandidate;
+use webrtc::peer::ice::ice_gather::ice_gatherer::RTCIceGatherer;
+use webrtc::peer::ice::ice_gather::ice_gatherer_state::RTCIceGathererState;
+use webrtc::peer::ice::ice_gather::RTCIceGatherOptions;
+use webrtc::peer::ice::ice_server::RTCIceServer;
+use webrtc::peer::peer_connection::OnTrackHdlrFn;
 
 use tokio::sync::Mutex;
 
@@ -99,6 +102,16 @@ pub struct Message {
     msg: Vec<u8>,
 }
 
+impl Message {
+    fn payload(&self) -> Vec<u8> {
+        self.msg.clone()
+    }
+
+    async fn reply(self, msg: Vec<u8>) -> Result<()> {
+        self.p.unwrap().reply(self.id, self.event, &msg).await
+    }
+}
+
 pub struct PeerConfig {
     setting_engine: SettingEngine,
     ice_servers: Vec<RTCIceServer>,
@@ -154,8 +167,8 @@ pub struct Peer {
     ready: bool,
     rtp_senders: Vec<Arc<RTCRtpSender>>,
     rtp_receivers: Vec<Arc<RTCRtpReceiver>>,
-    pending_requests: HashMap<u64, mpsc::UnboundedSender<Vec<u8>>>,
-    local_tracks: Option<Arc<dyn TrackLocal + Send + Sync>>,
+    pending_requests: Arc<Mutex<HashMap<u64, mpsc::UnboundedSender<Vec<u8>>>>>,
+    local_tracks: Vec<Arc<dyn TrackLocal + Send + Sync>>,
     signaling_dc: Arc<RTCDataChannel>,
     ice_gatherer: Arc<RTCIceGatherer>,
     dc_index: u16,
@@ -206,8 +219,8 @@ impl Peer {
             ready: false,
             rtp_senders: Vec::new(),
             rtp_receivers: Vec::new(),
-            pending_requests: HashMap::new(),
-            local_tracks: None,
+            pending_requests: Arc::new(Mutex::new(HashMap::new())),
+            local_tracks: Vec::new(),
 
             signaling_dc: Arc::clone(&signaling_dc),
             ice_gatherer: gatherer,
@@ -283,9 +296,9 @@ impl Peer {
                 .await?;
         }
         if request.is_reply {
-            if let Some(chan) = self.pending_requests.get(&request.id) {
+            if let Some(chan) = self.pending_requests.lock().await.get(&request.id) {
                 chan.send(request.payload.clone())?;
-                self.pending_requests.remove(&request.id);
+                self.pending_requests.lock().await.remove(&request.id);
             }
         }
 
@@ -436,8 +449,28 @@ impl Peer {
         Ok(())
     }
 
-    fn local_tracks(&self) -> Vec<TrackLocal>{
-        self.local_tracks
+    pub fn get_local_tracks(&self) -> Vec<Arc<dyn TrackLocal + Send + Sync>> {
+        return self.local_tracks.clone();
+    }
+
+    pub async fn on_ready(&self, f: OnPeerReadyFn) {
+        let mut handler = self.on_ready_handler.lock().await;
+        *handler = Some(f);
+    }
+
+    pub async fn on_data_channel(&self, f: OnPeerDataChannelFn) {
+        let mut handler = self.on_data_channel_handler.lock().await;
+        *handler = Some(f);
+    }
+
+    pub async fn on_track(&self, f: OnPeerTrackFn) {
+        let mut handler = self.on_track_handler.lock().await;
+        *handler = Some(f);
+    }
+
+    pub async fn on_request(&self, f: OnPeerRequestFn) {
+        let mut handler = self.on_request_handler.lock().await;
+        *handler = Some(f);
     }
 
     async fn create_data_channel(&mut self, label: String) -> Result<RTCDataChannel> {
@@ -479,6 +512,55 @@ impl Peer {
 
         self.ready = true;
         Ok(())
+    }
+
+    async fn close(&mut self) -> Vec<Result<()>> {
+        let mut results: Vec<Result<()>> = Vec::new();
+        for sender in &self.rtp_senders {
+            match sender.stop().await {
+                Err(err) => {
+                    results.push(Err(err.into()));
+                }
+                Ok(_) => results.push(Ok(())),
+            }
+        }
+
+        for receiver in &self.rtp_receivers {
+            match receiver.stop().await {
+                Err(err) => {
+                    results.push(Err(err.into()));
+                }
+                Ok(_) => results.push(Ok(())),
+            }
+        }
+
+        match self.sctp_transport.stop().await {
+            Err(err) => {
+                results.push(Err(err.into()));
+            }
+            Ok(_) => results.push(Ok(())),
+        }
+
+        match self.dtls_transport.stop().await {
+            Err(err) => {
+                results.push(Err(err.into()));
+            }
+            Ok(_) => results.push(Ok(())),
+        }
+
+        match self.ice_transport.stop().await {
+            Err(err) => {
+                results.push(Err(err.into()));
+            }
+            Ok(_) => results.push(Ok(())),
+        }
+
+        let mut handler = self.on_close_handler.lock().await;
+        if let Some(f) = &mut *handler {
+            f().await;
+        }
+
+        results
     }
 
     async fn receive(&mut self, s: Signal) -> Result<()> {
@@ -540,6 +622,138 @@ impl Peer {
         self.rtp_receivers.push(arc_rtp_receiver);
 
         Ok(())
+    }
+
+    async fn add_track(
+        &mut self,
+        receiver: RTCRtpReceiver,
+        remote_track: TrackRemote,
+        local_track: Arc<dyn TrackLocal + Send + Sync>,
+    ) -> Result<()> {
+        let codec = remote_track.codec().await;
+
+        let sdr = self
+            .api
+            .new_rtp_sender(Arc::clone(&local_track), Arc::clone(&self.dtls_transport))
+            .await;
+
+        self.media_engine
+            .lock()
+            .await
+            .register_codec(codec.clone(), remote_track.kind())?;
+
+        let track_meta = TrackMeta {
+            stream_id: remote_track.stream_id().await,
+            track_id: remote_track.id().await,
+            codec_parameters: Some(codec),
+        };
+
+        let encodings = RTCRtpCodingParameters {
+            ssrc: sdr.get_parameters().await.encodings[0].ssrc,
+            payload_type: remote_track.payload_type(),
+            ..Default::default()
+        };
+
+        let signal = Signal {
+            encodings: Some(encodings.clone()),
+            ice_candidates: Vec::new(),
+            ice_parameters: RTCIceParameters::default(),
+            dtls_parameters: DTLSParameters::default(),
+            sctp_capabilities: SCTPTransportCapabilities {
+                max_message_size: 0,
+            },
+            track_meta: Some(track_meta),
+        };
+
+        let payload = serde_json::to_string(&signal)?;
+
+        let timeout_duration = Duration::from_secs(2);
+
+        self.request(
+            timeout_duration,
+            SIGNALER_REQUEST_EVENT.to_string(),
+            payload.into_bytes(),
+        )
+        .await?;
+
+        let parameters = receiver.get_parameters().await;
+
+        let send_parameters = RTCRtpSendParameters {
+            rtp_parameters: parameters,
+            encodings: vec![RTCRtpCodingParameters {
+                ssrc: encodings.ssrc,
+                payload_type: encodings.payload_type,
+                ..Default::default()
+            }],
+        };
+
+        sdr.send(&send_parameters).await?;
+
+        self.local_tracks.push(local_track);
+
+        self.rtp_senders.push(Arc::new(sdr));
+
+        Ok(())
+    }
+
+    async fn emit(&mut self, event: String, payload: Vec<u8>) -> Result<()> {
+        let mut rng = rand::thread_rng();
+        let req = Request {
+            id: rng.gen::<u64>(),
+            is_reply: false,
+            event,
+            payload,
+        };
+
+        let json_str = serde_json::to_string(&req)?;
+
+        self.signaling_dc.send(&Bytes::from(json_str)).await?;
+
+        Ok(())
+    }
+
+    async fn request(
+        &mut self,
+        timeout: Duration,
+        event: String,
+        payload: Vec<u8>,
+    ) -> Result<Vec<u8>> {
+        let mut rng = rand::thread_rng();
+        let req = Request {
+            id: rng.gen::<u64>(),
+            is_reply: false,
+            event,
+            payload,
+        };
+
+        let json_str = serde_json::to_string(&req)?;
+
+        self.signaling_dc.send(&Bytes::from(json_str)).await?;
+
+        let timer = tokio::time::sleep(timeout);
+        tokio::pin!(timer);
+
+        let (event_publisher, mut event_consumer) = mpsc::unbounded_channel();
+        self.pending_requests
+            .lock()
+            .await
+            .insert(req.id, event_publisher); //[&req.id] = event_publisher;
+
+        tokio::select! {
+            _ = timer.as_mut() =>{
+                self.pending_requests.lock().await.remove(&req.id);
+                return Err(Error::ErrRelayRequestTimeout.into());
+            },
+            data = event_consumer.recv() => {
+                self.pending_requests.lock().await.remove(&req.id);
+
+                if let Some(payload)  = data{
+                    return Ok(payload);
+                }else{
+                    return Err(Error::ErrRelayRequestEmptyRespose.into());
+                }
+            },
+        };
     }
 
     pub async fn reply(&mut self, id: u64, event: String, payload: &[u8]) -> Result<()> {

@@ -11,6 +11,12 @@ pub enum Error {
 
     #[error("relay Peer send data failed")]
     ErrRelaySendDataFailed,
+
+    #[error("relay request timeout")]
+    ErrRelayRequestTimeout,
+
+    #[error("relay request empty response")]
+    ErrRelayRequestEmptyRespose,
 }
 impl Error {
     pub fn equal(&self, err: &anyhow::Error) -> bool {
