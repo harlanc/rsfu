@@ -49,20 +49,20 @@ struct ExtPacket {
     payload: VP8,
 }
 #[derive(Debug, PartialEq, Default, Clone)]
-struct Stats {
-    last_expected: u32,
-    last_received: u32,
+pub struct Stats {
+    pub last_expected: u32,
+    pub last_received: u32,
     lost_rate: f32,
-    packet_count: u32, // Number of packets received from this source.
+    pub packet_count: u32, // Number of packets received from this source.
     jitter: f64, // An estimate of the statistical variance of the RTP data packet inter-arrival time.
-    total_byte: u64,
+    pub total_byte: u64,
 }
 #[derive(Debug, Eq, PartialEq, Default, Clone)]
 struct Options {
     max_bitrate: u64,
 }
 #[derive(Debug, PartialEq, Default, Clone)]
-struct Buffer {
+pub struct Buffer {
     bucket: Option<Bucket>,
     nacker: Option<NackQueue>,
 
@@ -582,7 +582,7 @@ impl Buffer {
         )
     }
 
-    fn get_status(&self) -> Stats {
+    pub fn get_status(&self) -> Stats {
         self.stats.clone()
     }
 
