@@ -7,11 +7,14 @@ use byteorder::{BigEndian, ByteOrder, WriteBytesExt};
 
 const MAX_PACKET_SIZE: usize = 1500;
 
-fn distance(arg1: u16, arg2: u16) -> u16 {
-    if arg1 < arg2 {
-        65535 - arg2 + arg1
+//For example: sequence numbers inserted are 65533, 65534, the new coming one is 2,
+//the new is 2 and old is 65534, the distance between 2 and 65534 is 4 which is
+//65535 - 65534 + 2 + 1.(65533,65534,65535,0,1,2)
+fn distance(new: u16, old: u16) -> u16 {
+    if new < old {
+        65535 - old + new + 1
     } else {
-        arg1 - arg2
+        new - old
     }
 }
 #[derive(Debug, Eq, PartialEq, Default, Clone)]

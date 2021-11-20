@@ -113,7 +113,7 @@ impl NackQueue {
                 continue;
             }
 
-            np.lost_packets = np.lost_packets | (1 << v.seq_number as u16 - np.packet_id - 1);
+            np.lost_packets = np.lost_packets | 1 << (v.seq_number as u16 - np.packet_id - 1);
         }
 
         if np.packet_id != 0 {
