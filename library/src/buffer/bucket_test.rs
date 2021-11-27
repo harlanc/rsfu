@@ -150,4 +150,14 @@ mod tests {
         print!("value:{}\n", sn);
         print!("value2:{}\n", 4 << 8 | 5);
     }
+
+
+    #[test]
+    fn test_for() {
+
+        for i in 1..4{
+            println!("heh");
+        }
+
+    }
 }

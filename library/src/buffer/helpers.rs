@@ -22,11 +22,11 @@ use anyhow::Result;
 pub struct VP8 {
     temporal_supported: bool,
     // Optional Header
-    picture_id: u16, /* 8 or 16 bits, picture ID */
-    picture_id_idx: i32,
-    mbit: bool,
-    tl0_picture_idx: u8, /* 8 bits temporal level zero index */
-    tlz_idx: i32,
+    pub picture_id: u16, /* 8 or 16 bits, picture ID */
+    pub picture_id_idx: i32,
+    pub mbit: bool,
+    pub tl0_picture_idx: u8, /* 8 bits temporal level zero index */
+    pub tlz_idx: i32,
 
     // Optional Header If either of the T or K bits are set to 1,
     // the TID/Y/KEYIDX extension field MUST be present.

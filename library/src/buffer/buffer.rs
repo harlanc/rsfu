@@ -40,13 +40,13 @@ struct PendingPackets {
     pub packet: Vec<u8>,
 }
 #[derive(Debug, Eq, PartialEq, Default, Clone)]
-struct ExtPacket {
-    head: bool,
+pub struct ExtPacket {
+    pub head: bool,
     cycle: u32,
     arrival: i64,
-    packet: Packet,
+    pub packet: Packet,
     key_frame: bool,
-    payload: VP8,
+    pub payload: VP8,
 }
 #[derive(Debug, PartialEq, Default, Clone)]
 pub struct Stats {
