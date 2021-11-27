@@ -592,7 +592,7 @@ impl Buffer {
 }
 
 // is_timestamp_wrap_around returns true if wrap around happens from timestamp1 to timestamp2
-fn is_timestamp_wrap_around(timestamp1: u32, timestamp2: u32) -> bool {
+pub fn is_timestamp_wrap_around(timestamp1: u32, timestamp2: u32) -> bool {
     return (timestamp1 & 0xC000000 == 0) && (timestamp2 & 0xC000000 == 0xC000000);
 }
 
