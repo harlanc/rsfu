@@ -29,10 +29,16 @@ use super::helpers::VP8;
 use byteorder::{BigEndian, ByteOrder, WriteBytesExt};
 use bytes::{BufMut, BytesMut};
 
+use super::buffer_io::BufferIO;
 use crate::{buffer::bucket::Bucket, buffer::nack::NackQueue};
 
 const MAX_SEQUENCE_NUMBER: u32 = 1 << 16;
 const REPORT_DELTA: f64 = 1e9;
+
+pub enum BufferPacketType {
+    RTPBufferPacket = 1,
+    RTCPBufferPacket = 2,
+}
 
 #[derive(Debug, Eq, PartialEq, Default, Clone)]
 struct PendingPackets {
@@ -58,7 +64,7 @@ pub struct Stats {
     pub total_byte: u64,
 }
 #[derive(Debug, Eq, PartialEq, Default, Clone)]
-struct Options {
+pub struct Options {
     max_bitrate: u64,
 }
 #[derive(Debug, PartialEq, Default, Clone)]
@@ -106,8 +112,8 @@ pub struct Buffer {
     latest_timestamp: u32,      // latest received RTP timestamp on packet
     latest_timestamp_time: i64, // Time of the latest timestamp (in nanos since unix epoch)
 
-    video_pool: Vec<u8>,
-    audio_pool: Vec<u8>,
+    video_pool_len: usize,
+    audio_pool_len: usize,
     //callbacks
     // on_close: fn(),
     // on_audio_level: fn(level: u8),
@@ -116,14 +122,14 @@ pub struct Buffer {
 }
 
 impl Buffer {
-    fn new(ssrc: u32) -> Self {
+    pub fn new(ssrc: u32) -> Self {
         Self {
             media_ssrc: ssrc,
             ..Default::default()
         }
     }
 
-    fn calc(&mut self, pkt: &[u8], arrival_time: i64) {
+    pub fn calc(&mut self, pkt: &[u8], arrival_time: i64) {
         let sn = BigEndian::read_u16(&pkt[2..4]);
 
         if self.stats.packet_count == 0 {
@@ -327,7 +333,7 @@ impl Buffer {
         pkts
     }
 
-    fn bind(&mut self, params: RTCRtpParameters, o: Options) {
+    pub fn bind(&mut self, params: RTCRtpParameters, o: Options) {
         let codec = &params.codecs[0];
         self.clock_rate = codec.capability.clock_rate;
         self.max_bitrate = o.max_bitrate;
@@ -335,10 +341,10 @@ impl Buffer {
 
         if self.mime.starts_with("audio/") {
             self.codec_type = RTPCodecType::Audio;
-            self.bucket = Some(Bucket::new(&self.audio_pool[..]));
+            self.bucket = Some(Bucket::new(self.audio_pool_len));
         } else if self.mime.starts_with("video/") {
             self.codec_type = RTPCodecType::Video;
-            self.bucket = Some(Bucket::new(&self.audio_pool[..]));
+            self.bucket = Some(Bucket::new(self.video_pool_len));
         } else {
             self.codec_type = RTPCodecType::Unspecified;
         }
@@ -387,54 +393,6 @@ impl Buffer {
         self.bound = true;
     }
 
-    // Write adds a RTP Packet, out of order, new packet may be arrived later
-    fn write(&mut self, pkt: &[u8]) {
-        if !self.bound {
-            self.pending_packets.push(PendingPackets {
-                arrival_time: Instant::now().elapsed().subsec_nanos() as u64,
-                packet: Vec::from(pkt),
-            });
-
-            return;
-        }
-
-        self.calc(pkt, Instant::now().elapsed().subsec_nanos() as i64);
-    }
-
-    fn read(&mut self, buff: &mut [u8]) -> Result<usize> {
-        if self.closed {
-            return Err(Error::ErrIOEof.into());
-        }
-
-        let mut n: usize = 0;
-
-        if self.pending_packets.len() > self.last_packet_read as usize {
-            if buff.len()
-                < self
-                    .pending_packets
-                    .get(self.last_packet_read as usize)
-                    .unwrap()
-                    .packet
-                    .len()
-            {
-                return Err(Error::ErrBufferTooSmall.into());
-            }
-
-            let packet = &self
-                .pending_packets
-                .get(self.last_packet_read as usize)
-                .unwrap()
-                .packet;
-
-            n = packet.len();
-
-            buff.copy_from_slice(&packet[..]);
-            return Ok(n);
-        }
-
-        Ok(n)
-    }
-
     async fn read_extended(&mut self) -> Result<ExtPacket> {
         loop {
             if self.closed {
@@ -448,10 +406,6 @@ impl Buffer {
 
             sleep(Duration::from_millis(10)).await;
         }
-    }
-
-    fn close(&mut self) {
-        if self.bucket.is_some() && self.codec_type == RTPCodecType::Video {}
     }
 
     fn build_remb_packet(&mut self) -> ReceiverEstimatedMaximumBitrate {
@@ -588,6 +542,63 @@ impl Buffer {
 
     fn get_latest_timestamp(&self) -> (u32, i64) {
         (self.latest_timestamp, self.latest_timestamp_time)
+    }
+}
+
+impl BufferIO for Buffer {
+    // Write adds a RTP Packet, out of order, new packet may be arrived later
+    fn write(&mut self, pkt: &[u8]) -> Result<u32> {
+        if !self.bound {
+            self.pending_packets.push(PendingPackets {
+                arrival_time: Instant::now().elapsed().subsec_nanos() as u64,
+                packet: Vec::from(pkt),
+            });
+
+            return Ok(0);
+        }
+
+        self.calc(pkt, Instant::now().elapsed().subsec_nanos() as i64);
+
+        Ok(0)
+    }
+
+    fn read(&mut self, buff: &mut [u8]) -> Result<usize> {
+        if self.closed {
+            return Err(Error::ErrIOEof.into());
+        }
+
+        let mut n: usize = 0;
+
+        if self.pending_packets.len() > self.last_packet_read as usize {
+            if buff.len()
+                < self
+                    .pending_packets
+                    .get(self.last_packet_read as usize)
+                    .unwrap()
+                    .packet
+                    .len()
+            {
+                return Err(Error::ErrBufferTooSmall.into());
+            }
+
+            let packet = &self
+                .pending_packets
+                .get(self.last_packet_read as usize)
+                .unwrap()
+                .packet;
+
+            n = packet.len();
+
+            buff.copy_from_slice(&packet[..]);
+            return Ok(n);
+        }
+
+        Ok(n)
+    }
+    fn close(&mut self) -> Result<()> {
+        if self.bucket.is_some() && self.codec_type == RTPCodecType::Video {}
+
+        Ok(())
     }
 }
 

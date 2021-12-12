@@ -20,8 +20,7 @@ fn distance(new: u16, old: u16) -> u16 {
 #[derive(Debug, Eq, PartialEq, Default, Clone)]
 pub struct Bucket {
     buf: Vec<u8>,
-    src: Vec<u8>,
-
+    // src: Vec<u8>,
     init: bool,
     step: i32,
     headSN: u16,
@@ -29,14 +28,14 @@ pub struct Bucket {
 }
 
 impl Bucket {
-    pub fn new(buf: &[u8]) -> Self {
+    pub fn new(length: usize) -> Self {
         Self {
-            buf: buf.to_vec(),
-            src: Vec::new(),
+            buf: vec![0; length],
+            // src: Vec::new(),
             init: false,
             step: 0,
             headSN: 0,
-            maxSteps: (buf.len() / MAX_PACKET_SIZE) as i32 - 1,
+            maxSteps: (length / MAX_PACKET_SIZE) as i32 - 1,
         }
     }
 

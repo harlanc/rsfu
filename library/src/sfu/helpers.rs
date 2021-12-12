@@ -77,7 +77,7 @@ fn modify_vp8_temporal_payload(
 
 // Do a fuzzy find for a codec in the list of codecs
 // Used for lookup up a codec in an existing list to find a match
-fn codec_parameters_fuzzy_search(
+pub fn codec_parameters_fuzzy_search(
     needle: RTCRtpCodecParameters,
     hay_stack: &[RTCRtpCodecParameters],
 ) -> Result<RTCRtpCodecParameters> {
@@ -144,11 +144,11 @@ impl NtpTime {
     fn to_ntp_time(&self, t: SystemTime) -> NtpTime {
         let duration = t.duration_since(UNIX_EPOCH).unwrap();
         let mut nsec = duration.as_nanos() as u64;
-        
+
         let sec = nsec / 1000000000;
         nsec = (nsec - sec * 1000000000) << 32;
         let mut frac = nsec / 1000000000;
-        
+
         if nsec % 1000000000 >= 1000000000 / 2 {
             frac += 1;
         }

@@ -143,7 +143,7 @@ pub fn is_h264_keyframe(payload: &[u8]) -> bool {
             if i + 2 > payload.len() {
                 return false;
             }
-            let length = payload[i] << 8 | payload[i + 1];
+            let length = ((payload[i] as u16) << 8) | payload[i + 1] as u16;
             i += 2;
             if i + length as usize > payload.len() {
                 return false;

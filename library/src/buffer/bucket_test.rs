@@ -44,9 +44,9 @@ mod tests {
     fn test_queue() {
         let packets = init();
 
-        let buf = vec![0u8; 25000];
+        // let buf = vec![0u8; 25000];
 
-        let mut bucket = Bucket::new(&buf);
+        let mut bucket = Bucket::new(25000);
         let mut raw = vec![0u8; 25000];
 
         for p in &packets {
@@ -101,9 +101,9 @@ mod tests {
     fn test_queue_edges() {
         let packets = init2();
 
-        let buf = vec![0u8; 25000];
+        // let buf = vec![0u8; 25000];
 
-        let mut bucket = Bucket::new(&buf);
+        let mut bucket = Bucket::new(25000);
         let mut raw = vec![0u8; 25000];
 
         for p in &packets {
@@ -151,13 +151,10 @@ mod tests {
         print!("value2:{}\n", 4 << 8 | 5);
     }
 
-
     #[test]
     fn test_for() {
-
-        for i in 1..4{
+        for i in 1..4 {
             println!("heh");
         }
-
     }
 }

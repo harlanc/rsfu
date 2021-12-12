@@ -3,10 +3,12 @@
 
 use super::sequencer::{self, AtomicSequencer};
 use super::simulcast::SimulcastTrackHelpers;
+use anyhow::Result;
 use atomic::Atomic;
 use rtp::extension::audio_level_extension::AudioLevelExtension;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, Ordering};
 
+use super::helpers;
 use super::receiver::Receiver;
 use std::future::Future;
 use std::pin::Pin;
@@ -124,9 +126,21 @@ impl DownTrack {
         }
     }
 
-    // fn bind(&mut self, t: TrackLocalContext) -> Result<RTCRtpCodecParameters> {
+    fn bind(&mut self, t: TrackLocalContext) -> Result<RTCRtpCodecParameters> {
+        let parameters = RTCRtpCodecParameters {
+            capability: self.codec.clone(),
+            ..Default::default()
+        };
 
-    //     let parameters =
+        let codec = helpers::codec_parameters_fuzzy_search(parameters, t.codec_parameters())?;
 
-    // }
+        self.ssrc = t.ssrc() as u32;
+        self.payload_type = codec.payload_type;
+        self.write_stream = t.write_stream();
+        self.mime = codec.capability.mime_type.to_lowercase();
+        self.re_sync.store(true, Ordering::Relaxed);
+        self.enabled.store(true, Ordering::Relaxed);
+
+        Ok(codec)
+    }
 }
