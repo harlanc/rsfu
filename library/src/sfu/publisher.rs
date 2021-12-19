@@ -1,4 +1,4 @@
-use webrtc::peer::peer_connection::RTCPeerConnection;
+use webrtc::peer_connection::RTCPeerConnection;
 
 
 struct Publisher {

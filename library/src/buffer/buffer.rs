@@ -10,9 +10,9 @@ use rtp::extension::audio_level_extension::AudioLevelExtension;
 use rtp::packet::Packet;
 use sdp::extmap;
 use std::time::Instant;
-use webrtc::media::rtp as webrtc_rtp;
-use webrtc::media::rtp::rtp_codec::RTCRtpParameters;
-use webrtc::media::rtp::rtp_codec::RTPCodecType;
+use webrtc::rtp_transceiver as webrtc_rtp;
+use webrtc::rtp_transceiver::rtp_codec::RTCRtpParameters;
+use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
 use webrtc_util::{Marshal, MarshalSize, Unmarshal};
 
 use anyhow::Result;

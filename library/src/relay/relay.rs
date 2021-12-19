@@ -9,26 +9,28 @@ use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::setting_engine::SettingEngine;
 use webrtc::api::APIBuilder;
 use webrtc::api::API;
-use webrtc::data::data_channel::data_channel_message::DataChannelMessage;
-use webrtc::data::data_channel::data_channel_parameters::DataChannelParameters;
-use webrtc::data::data_channel::RTCDataChannel;
-use webrtc::data::sctp_transport::sctp_transport_capabilities::SCTPTransportCapabilities;
-use webrtc::data::sctp_transport::RTCSctpTransport;
-use webrtc::media::dtls_transport::dtls_parameters::DTLSParameters;
-use webrtc::media::dtls_transport::RTCDtlsTransport;
-use webrtc::media::ice_transport::ice_parameters::RTCIceParameters;
-use webrtc::media::ice_transport::ice_role::RTCIceRole;
-use webrtc::media::ice_transport::RTCIceTransport;
-use webrtc::media::rtp::rtp_codec::RTCRtpCodecParameters;
-use webrtc::media::rtp::rtp_codec::RTCRtpParameters;
-use webrtc::media::rtp::rtp_codec::RTPCodecType;
-use webrtc::media::rtp::rtp_receiver::RTCRtpReceiver;
-use webrtc::media::rtp::rtp_sender::RTCRtpSender;
-use webrtc::media::rtp::RTCRtpCodingParameters;
-use webrtc::media::rtp::RTCRtpReceiveParameters;
-use webrtc::media::rtp::RTCRtpSendParameters;
-use webrtc::media::track::track_local::TrackLocal;
-use webrtc::media::track::track_remote::TrackRemote;
+
+use interceptor::noop::NoOp;
+use webrtc::data_channel::data_channel_message::DataChannelMessage;
+use webrtc::data_channel::data_channel_parameters::DataChannelParameters;
+use webrtc::data_channel::RTCDataChannel;
+use webrtc::dtls_transport::dtls_parameters::DTLSParameters;
+use webrtc::dtls_transport::RTCDtlsTransport;
+use webrtc::ice_transport::ice_parameters::RTCIceParameters;
+use webrtc::ice_transport::ice_role::RTCIceRole;
+use webrtc::ice_transport::RTCIceTransport;
+use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecParameters;
+use webrtc::rtp_transceiver::rtp_codec::RTCRtpParameters;
+use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
+use webrtc::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
+use webrtc::rtp_transceiver::rtp_sender::RTCRtpSender;
+use webrtc::rtp_transceiver::RTCRtpCodingParameters;
+use webrtc::rtp_transceiver::RTCRtpReceiveParameters;
+use webrtc::rtp_transceiver::RTCRtpSendParameters;
+use webrtc::sctp_transport::sctp_transport_capabilities::SCTPTransportCapabilities;
+use webrtc::sctp_transport::RTCSctpTransport;
+use webrtc::track::track_local::TrackLocal;
+use webrtc::track::track_remote::TrackRemote;
 
 use atomic::Atomic;
 use std::future::Future;
@@ -37,14 +39,12 @@ use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::mpsc;
 use tokio::time::Duration;
-use webrtc::peer::ice::ice_candidate::RTCIceCandidate;
-use webrtc::peer::ice::ice_gather::ice_gatherer::RTCIceGatherer;
-use webrtc::peer::ice::ice_gather::ice_gatherer_state::RTCIceGathererState;
-use webrtc::peer::ice::ice_gather::RTCIceGatherOptions;
-use webrtc::peer::ice::ice_server::RTCIceServer;
-use webrtc::peer::peer_connection::OnTrackHdlrFn;
-
-
+use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
+use webrtc::ice_transport::ice_gatherer::RTCIceGatherOptions;
+use webrtc::ice_transport::ice_gatherer::RTCIceGatherer;
+use webrtc::ice_transport::ice_gatherer_state::RTCIceGathererState;
+use webrtc::ice_transport::ice_server::RTCIceServer;
+use webrtc::peer_connection::OnTrackHdlrFn;
 
 use tokio::sync::Mutex;
 
@@ -446,7 +446,7 @@ impl Peer {
         Ok(json_str)
     }
 
-    async fn write_rtcp(&self, pkt: &(dyn RtcpPacket + Send + Sync)) -> Result<()> {
+    async fn write_rtcp(&self, pkt: &[Box<dyn RtcpPacket + Send + Sync>]) -> Result<()> {
         self.dtls_transport.write_rtcp(pkt).await?;
         Ok(())
     }
@@ -584,9 +584,11 @@ impl Peer {
             .unwrap()
             .register_codec(codec_parameters.to_owned(), codec_type)?;
 
-        let rtp_receiver = self
-            .api
-            .new_rtp_receiver(codec_type, Arc::clone(&self.dtls_transport));
+        let rtp_receiver = self.api.new_rtp_receiver(
+            codec_type,
+            Arc::clone(&self.dtls_transport),
+            Arc::new(NoOp {}),
+        );
 
         let mut encodings = vec![];
         let coding_parameters = s.encodings.unwrap();
@@ -636,7 +638,11 @@ impl Peer {
 
         let sdr = self
             .api
-            .new_rtp_sender(Arc::clone(&local_track), Arc::clone(&self.dtls_transport))
+            .new_rtp_sender(
+                Arc::clone(&local_track),
+                Arc::clone(&self.dtls_transport),
+                Arc::new(NoOp {}),
+            )
             .await;
 
         self.media_engine

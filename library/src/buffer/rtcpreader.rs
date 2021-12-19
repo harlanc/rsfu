@@ -16,8 +16,8 @@ pub type OnCloseFn =
 pub struct RTCPReader {
     ssrc: u32,
     closed: AtomicBool,
-    on_packet: Arc<Mutex<Option<OnPacketFn>>>,
-    on_close: Arc<Mutex<Option<OnCloseFn>>>,
+    on_packet_handler: Arc<Mutex<Option<OnPacketFn>>>,
+    on_close_handler: Arc<Mutex<Option<OnCloseFn>>>,
 }
 //https://stackoverflow.com/questions/37370120/right-way-to-have-function-pointers-in-struct
 fn default() {}
@@ -27,25 +27,25 @@ impl RTCPReader {
         Self {
             ssrc,
             closed: AtomicBool::new(false),
-            on_packet: Arc::default(),
-            on_close: Arc::default(),
+            on_packet_handler: Arc::default(),
+            on_close_handler: Arc::default(),
         }
     }
 
-    async fn set_on_close(&mut self, f: OnCloseFn) {
-        let mut on_close = self.on_close.lock().await;
+    pub async fn on_close(&mut self, f: OnCloseFn) {
+        let mut on_close = self.on_close_handler.lock().await;
         *on_close = Some(f);
     }
 
-    async fn set_on_packet(&mut self, f: OnPacketFn) {
-        let mut on_packet = self.on_packet.lock().await;
+    pub async fn on_packet(&mut self, f: OnPacketFn) {
+        let mut on_packet = self.on_packet_handler.lock().await;
         *on_packet = Some(f);
     }
 
-    fn read(&mut self, buff: &mut [u8]) -> Result<usize> {
+    pub fn read(&mut self, buff: &mut [u8]) -> Result<usize> {
         Ok(0)
     }
-    async fn write(&mut self, p: &[u8]) -> Result<u32> {
+    pub async fn write(&mut self, p: &[u8]) -> Result<u32> {
         if self.closed.load(Ordering::Relaxed) {
             return Err(Error::ErrIOEof.into());
         }
@@ -57,7 +57,7 @@ impl RTCPReader {
         //     log::warn!("on_track unset, unable to handle incoming media streams");
         // }
 
-        let mut handler = self.on_packet.lock().await;
+        let mut handler = self.on_packet_handler.lock().await;
         if let Some(f) = &mut *handler {
             f(p);
         }
@@ -70,7 +70,7 @@ impl RTCPReader {
     async fn close(&mut self) -> Result<()> {
         self.closed.store(true, Ordering::Relaxed);
 
-        let mut handler = self.on_close.lock().await;
+        let mut handler = self.on_close_handler.lock().await;
         if let Some(f) = &mut *handler {
             f();
         }

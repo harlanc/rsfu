@@ -1,6 +1,7 @@
 use super::simulcast::SimulcastConfig;
-use webrtc::media::rtp::rtp_receiver::RTCRtpReceiver;
-use webrtc::media::track::track_remote::TrackRemote;
+
+use webrtc::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
+use webrtc::track::track_remote::TrackRemote;
 pub struct RouterConfig {
     with_stats: bool,
     max_bandwidth: u64,

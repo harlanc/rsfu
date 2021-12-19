@@ -6,20 +6,27 @@ use super::simulcast::SimulcastTrackHelpers;
 use anyhow::Result;
 use atomic::Atomic;
 use rtp::extension::audio_level_extension::AudioLevelExtension;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU32, Ordering};
 
 use super::helpers;
 use super::receiver::Receiver;
+use super::sequencer::PacketMeta;
+use bytes::Bytes;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Once;
 use tokio::sync::Mutex;
-use webrtc::media::rtp::rtp_codec::RTCRtpCodecCapability;
-use webrtc::media::rtp::rtp_transceiver::RTCRtpTransceiver;
+use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
+use webrtc::rtp_transceiver::RTCRtpTransceiver;
 
-use webrtc::media::rtp::rtp_codec::RTCRtpCodecParameters;
-use webrtc::media::track::track_local::{TrackLocal, TrackLocalContext, TrackLocalWriter};
+use crate::buffer::factory::AtomicFactory;
+
+use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecParameters;
+use webrtc::track::track_local::{TrackLocal, TrackLocalContext, TrackLocalWriter};
+
+use rtcp::packet::unmarshal;
+use rtcp::packet::Packet as RtcpPacket;
 
 pub type OnCloseFn =
     Box<dyn (FnMut() -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>) + Send + Sync>;
@@ -43,6 +50,7 @@ pub struct DownTrack {
     payload_type: u8,
     sequencer: AtomicSequencer,
     track_type: DownTrackType,
+    buffer_factory: AtomicFactory,
     pub payload: Vec<u8>,
 
     current_spatial_layer: i32,
@@ -53,7 +61,7 @@ pub struct DownTrack {
     re_sync: AtomicBool,
     sn_offset: u16,
     ts_offset: u32,
-    last_ssrc: u32,
+    last_ssrc: AtomicU32,
     last_sn: u16,
     last_ts: u32,
 
@@ -93,6 +101,7 @@ impl DownTrack {
             payload_type: 0,
             sequencer: AtomicSequencer::new(0),
             track_type: DownTrackType::SimpleDownTrack,
+            buffer_factory: AtomicFactory::new(1000, 1000),
             payload: Vec::new(),
 
             current_spatial_layer: 0,
@@ -103,7 +112,7 @@ impl DownTrack {
             re_sync: AtomicBool::new(false),
             sn_offset: 0,
             ts_offset: 0,
-            last_ssrc: 0,
+            last_ssrc: AtomicU32::new(0),
             last_sn: 0,
             last_ts: 0,
 
@@ -126,7 +135,7 @@ impl DownTrack {
         }
     }
 
-    fn bind(&mut self, t: TrackLocalContext) -> Result<RTCRtpCodecParameters> {
+    async fn bind(&mut self, t: TrackLocalContext) -> Result<RTCRtpCodecParameters> {
         let parameters = RTCRtpCodecParameters {
             capability: self.codec.clone(),
             ..Default::default()
@@ -141,6 +150,106 @@ impl DownTrack {
         self.re_sync.store(true, Ordering::Relaxed);
         self.enabled.store(true, Ordering::Relaxed);
 
+        let rtcp_buffer = self.buffer_factory.get_or_new_rtcp_buffer(t.ssrc()).await;
+        let rtcp = rtcp_buffer.lock().await;
+        // rtcp.on_packet(Box::new(move || {
+        //     Box::pin(async move {
+        //         let mut handler = on_ready_handler2.lock().await;
+        //         if let Some(f) = &mut *handler {
+        //             f().await;
+        //         }
+        //     })
+        // }));
+
         Ok(codec)
+    }
+
+    async fn handle_rtcp(&mut self, data: &[u8]) -> Result<()> {
+        let enabled = self.enabled.load(Ordering::Relaxed);
+        if !enabled {
+            return Ok(());
+        }
+
+        let mut buf = data;
+
+        let mut pkts = rtcp::packet::unmarshal(&mut buf)?;
+
+        let mut fwd_pkts: Vec<Box<dyn RtcpPacket>> = Vec::new();
+        let mut pli_once = true;
+        let mut fir_once = true;
+
+        let mut max_rate_packet_loss: u8 = 0;
+        let mut expected_min_bitrate: u64 = 0;
+
+        let ssrc = self.last_ssrc.load(Ordering::Release);
+        if ssrc == 0 {
+            return Ok(());
+        }
+        
+        for pkt in &mut pkts {
+            if let Some(pic_loss_indication) = pkt
+                    .as_any()
+                    .downcast_ref::<rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication>()
+                {
+                    if pli_once {
+                        let mut pli = pic_loss_indication.clone();
+                        pli.media_ssrc = ssrc;
+                        pli.sender_ssrc = self.ssrc;
+            
+                        fwd_pkts.push(Box::new(pli));
+                        pli_once = false;
+                    }
+                }
+            else if let Some(full_intra_request) = pkt
+                    .as_any()
+                    .downcast_ref::<rtcp::payload_feedbacks::full_intra_request::FullIntraRequest>()
+            {
+                if fir_once{
+                    let mut fir = full_intra_request.clone();
+                    fir.media_ssrc = ssrc;
+                    fir.sender_ssrc = self.ssrc;
+
+                    fwd_pkts.push(Box::new(fir));
+                    fir_once = false;
+                }
+            }
+            else if let Some(receiver_estimated_max_bitrate) = pkt
+                    .as_any()
+                    .downcast_ref::<rtcp::payload_feedbacks::receiver_estimated_maximum_bitrate::ReceiverEstimatedMaximumBitrate>()
+                    {
+                if expected_min_bitrate == 0 || expected_min_bitrate > receiver_estimated_max_bitrate.bitrate as u64{
+                    expected_min_bitrate = receiver_estimated_max_bitrate.bitrate as u64;
+
+                }
+            }
+            else if let Some(receiver_report) = pkt.as_any().downcast_ref::<rtcp::receiver_report::ReceiverReport>(){
+
+                for r in &receiver_report.reports{
+                    if max_rate_packet_loss == 0 || max_rate_packet_loss < r.fraction_lost{
+                        max_rate_packet_loss = r.fraction_lost;
+                    }
+
+                }
+
+            }
+            else if let Some(transport_layer_nack) = pkt.as_any().downcast_ref::<rtcp::transport_feedbacks::transport_layer_nack::TransportLayerNack>()
+            {
+                let mut nacked_packets:Vec<PacketMeta> = Vec::new();
+                for pair in &transport_layer_nack.nacks{
+
+                    let seq_numbers = pair.packet_list();
+                    let mut pairs= self.sequencer.get_seq_no_pairs(&seq_numbers[..]).await;
+
+                    nacked_packets.append(&mut pairs);
+
+
+                }
+
+            }
+        }
+
+        //let fwd_pkts
+
+        Ok(())
     }
 }

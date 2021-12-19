@@ -57,11 +57,7 @@ impl AtomicFactory {
     //     }
     // }
 
-    async fn get_or_new_rtcp_buffer(
-        &mut self,
-        packet_type: BufferPacketType,
-        ssrc: u32,
-    ) -> Arc<Mutex<RTCPReader>> {
+    pub async fn get_or_new_rtcp_buffer(&mut self, ssrc: u32) -> Arc<Mutex<RTCPReader>> {
         let factory = &mut self.factory.lock().await;
 
         if let Some(reader) = factory.rtcp_readers.get_mut(&ssrc) {

@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, Ordering};
 use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
-use webrtc::media::rtp::rtp_codec::{RTCRtpCodecParameters, RTPCodecType};
+use webrtc::rtp_transceiver::rtp_codec::{RTCRtpCodecParameters, RTPCodecType};
 use webrtc::Error as WebrtcError;
 
 // setVp8TemporalLayer is a helper to detect and modify accordingly the vp8 payload to reflect

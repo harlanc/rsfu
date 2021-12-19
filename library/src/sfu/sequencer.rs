@@ -9,7 +9,7 @@ use tokio::sync::Mutex;
 
 const IGNORE_RETRANSMISSION: u8 = 100;
 #[derive(Default, Clone)]
-struct PacketMeta {
+pub struct PacketMeta {
     // Original sequence number from stream.
     // The original sequence number is used to find the original
     // packet from publisher
@@ -27,7 +27,7 @@ struct PacketMeta {
     // track of the requested packets helps to avoid writing multiple times
     // the same packet.
     // The resolution is 1 ms counting after the sequencer start time.
-    last_nack: u32,
+    last_nack: u128,
     // Spatial layer of packet
     layer: u8,
     // Information that differs depending the codec
@@ -49,7 +49,7 @@ struct Sequencer {
     seq: HashMap<i32, PacketMeta>,
     step: i32,
     head_sn: u16,
-    start_time: u64,
+    start_time: u128,
 }
 
 #[derive(Default)]
@@ -65,7 +65,7 @@ impl Sequencer {
             start_time: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
-                .as_millis() as u64,
+                .as_millis(),
             ..Default::default()
         }
     }
@@ -138,5 +138,40 @@ impl AtomicSequencer {
         }
 
         Some(sequencer.seq.get(&sequencer.step).unwrap().clone())
+    }
+
+    pub async fn get_seq_no_pairs(&mut self, seq_nos: &[u16]) -> Vec<PacketMeta> {
+        let mut sequencer = self.sequencer.lock().await;
+
+        let mut meta: Vec<PacketMeta> = Vec::new();
+
+        let ref_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+            - sequencer.start_time;
+
+        for sn in seq_nos {
+            let mut step = sequencer.step - (sequencer.head_sn - sn) as i32 - 1;
+
+            if step < 0 {
+                if step * -1 >= sequencer.max {
+                    continue;
+                }
+
+                step = sequencer.max + step;
+            }
+
+            let seq = sequencer.seq.get_mut(&step).unwrap();
+
+            if seq.target_seq_no == sn.clone() {
+                if seq.last_nack == 0 || ref_time - seq.last_nack > IGNORE_RETRANSMISSION as u128 {
+                    seq.last_nack = ref_time;
+                    meta.push(seq.clone());
+                }
+            }
+        }
+
+        meta
     }
 }
