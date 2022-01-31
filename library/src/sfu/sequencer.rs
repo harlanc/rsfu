@@ -140,7 +140,7 @@ impl AtomicSequencer {
         Some(sequencer.seq.get(&sequencer.step).unwrap().clone())
     }
 
-    pub async fn get_seq_no_pairs(&mut self, seq_nos: &[u16]) -> Vec<PacketMeta> {
+    pub async fn get_seq_no_pairs(&self, seq_nos: &[u16]) -> Vec<PacketMeta> {
         let mut sequencer = self.sequencer.lock().await;
 
         let mut meta: Vec<PacketMeta> = Vec::new();

@@ -8,8 +8,9 @@ use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-pub type OnPacketFn =
-    Box<dyn (FnMut(&[u8]) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>) + Send + Sync>;
+pub type OnPacketFn = Box<
+    dyn (FnMut(&[u8]) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>) + Send + Sync,
+>;
 pub type OnCloseFn =
     Box<dyn (FnMut() -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>) + Send + Sync>;
 
@@ -21,6 +22,16 @@ pub struct RTCPReader {
 }
 //https://stackoverflow.com/questions/37370120/right-way-to-have-function-pointers-in-struct
 fn default() {}
+
+struct Test<'a> {
+    a: String,
+    b: &'a String,
+}
+#[derive(Debug)]
+struct Test1 {
+    a: String,
+    b: *const String, // 改成指针
+}
 
 impl RTCPReader {
     pub fn new(ssrc: u32) -> Self {

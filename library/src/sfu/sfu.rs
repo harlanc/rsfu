@@ -17,35 +17,37 @@ use webrtc::ice_transport::ice_candidate_type::RTCIceCandidateType;
 use webrtc::ice_transport::ice_credential_type::RTCIceCredentialType;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 
+use std::sync::Arc;
+use turn::auth::AuthHandler;
 use webrtc::peer_connection::configuration::*;
 use webrtc::peer_connection::policy::sdp_semantics::RTCSdpSemantics;
 use webrtc_ice::mdns::MulticastDnsMode;
 use webrtc_ice::udp_mux::*;
 use webrtc_ice::udp_network::*;
-
+#[derive(Clone)]
 struct ICEServerConfig {
     urls: Vec<String>,
     user_name: String,
     credential: String,
 }
-
+#[derive(Clone)]
 struct Candidates {
     ice_lite: bool,
     nat1_to_1ips: Vec<String>,
 }
 #[derive(Default)]
-struct WebRTCTransportConfig {
-    configuration: RTCConfiguration,
-    setting: SettingEngine,
+pub struct WebRTCTransportConfig {
+    pub configuration: RTCConfiguration,
+    pub setting: SettingEngine,
     Router: RouterConfig,
 }
-
+#[derive(Clone)]
 struct WebRTCTimeoutsConfig {
     ice_disconnected_timeout: i32,
     ice_failed_timeout: i32,
     ice_keepalive_interval: i32,
 }
-
+#[derive(Clone)]
 struct WebRTCConfig {
     ice_single_port: i32,
     ice_port_range: Vec<u16>,
@@ -55,18 +57,18 @@ struct WebRTCConfig {
     mdns: bool,
     timeouts: WebRTCTimeoutsConfig,
 }
-
+#[derive(Clone)]
 struct SFUConfig {
     ballast: i64,
     with_stats: bool,
 }
-
+#[derive(Clone)]
 struct Config {
     sfu: SFUConfig,
     webrtc: WebRTCConfig,
     router: RouterConfig,
     turn: TurnConfig,
-    turn_auth: fn(user_name: String, realm: String, src_addr: SocketAddr) -> (BytesMut, bool),
+    turn_auth: Option<Arc<dyn AuthHandler + Send + Sync>>,
 }
 
 #[derive(Default)]
@@ -79,7 +81,7 @@ struct SFU {
 }
 
 impl WebRTCTransportConfig {
-    async fn new(c: Config) -> Result<Self> {
+    async fn new(c: &Config) -> Result<Self> {
         let mut se = SettingEngine::default();
         se.disable_media_engine_copy(true);
 
@@ -119,11 +121,11 @@ impl WebRTCTransportConfig {
         if c.webrtc.candidates.ice_lite {
             se.set_lite(c.webrtc.candidates.ice_lite);
         } else {
-            for ice_server in c.webrtc.ice_servers {
+            for ice_server in &c.webrtc.ice_servers {
                 let s = RTCIceServer {
-                    urls: ice_server.urls,
-                    username: ice_server.user_name,
-                    credential: ice_server.credential,
+                    urls: ice_server.urls.clone(),
+                    username: ice_server.user_name.clone(),
+                    credential: ice_server.credential.clone(),
                     credential_type: RTCIceCredentialType::Unspecified,
                 };
 
@@ -166,12 +168,14 @@ impl WebRTCTransportConfig {
                 ..Default::default()
             },
             setting: se,
-            Router: c.router,
+            Router: c.router.clone(),
         };
 
         if c.webrtc.candidates.nat1_to_1ips.len() > 0 {
-            w.setting
-                .set_nat_1to1_ips(c.webrtc.candidates.nat1_to_1ips, RTCIceCandidateType::Host);
+            w.setting.set_nat_1to1_ips(
+                c.webrtc.candidates.nat1_to_1ips.clone(),
+                RTCIceCandidateType::Host,
+            );
         }
 
         if c.webrtc.mdns {
@@ -189,16 +193,21 @@ impl WebRTCTransportConfig {
 
 impl SFU {
     async fn new(c: Config) -> Result<Self> {
-        let w = WebRTCTransportConfig::new(c).await.unwrap();
+        let w = WebRTCTransportConfig::new(&c).await.unwrap();
 
         let with_status = w.Router.with_stats;
 
-        let sfu = SFU {
+        let mut sfu = SFU {
             webrtc: w,
             sessions: HashMap::new(),
             with_status: with_status,
             ..Default::default()
         };
+
+        if c.turn.enabled {
+            let turn_server = super::turn::init_turn_server(c.turn, c.turn_auth).await?;
+            sfu.turn = Some(turn_server);
+        }
 
         Ok(sfu)
     }

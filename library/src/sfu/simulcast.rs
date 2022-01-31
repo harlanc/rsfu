@@ -1,5 +1,9 @@
 use std::time::{Duration, SystemTime};
 
+pub const QUARTER_RESOLUTION: &'static str = "q";
+pub const HALF_RESOLUTION: &'static str = "h";
+pub const FULL_RESOLUTION: &'static str = "f";
+#[derive(Default, Clone)]
 pub struct SimulcastConfig {
     best_quality_first: bool,
     enable_temporal_layer: bool,

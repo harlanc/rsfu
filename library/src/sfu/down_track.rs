@@ -48,7 +48,7 @@ pub struct DownTrack {
     stream_id: String,
     max_track: i32,
     payload_type: u8,
-    sequencer: AtomicSequencer,
+    sequencer: Arc<AtomicSequencer>,
     track_type: DownTrackType,
     buffer_factory: AtomicFactory,
     pub payload: Vec<u8>,
@@ -99,7 +99,7 @@ impl DownTrack {
             stream_id: String::from(""),
             max_track: 0,
             payload_type: 0,
-            sequencer: AtomicSequencer::new(0),
+            sequencer: Arc::new(AtomicSequencer::new(0)),
             track_type: DownTrackType::SimpleDownTrack,
             buffer_factory: AtomicFactory::new(1000, 1000),
             payload: Vec::new(),
@@ -151,38 +151,43 @@ impl DownTrack {
         self.enabled.store(true, Ordering::Relaxed);
 
         let rtcp_buffer = self.buffer_factory.get_or_new_rtcp_buffer(t.ssrc()).await;
-        let rtcp = rtcp_buffer.lock().await;
-        // rtcp.on_packet(Box::new(move || {
-        //     Box::pin(async move {
-        //         let mut handler = on_ready_handler2.lock().await;
-        //         if let Some(f) = &mut *handler {
-        //             f().await;
-        //         }
-        //     })
-        // }));
+        let mut rtcp = rtcp_buffer.lock().await;
+
+        //Box::new(move |d: Arc<RTCDataChannel>| {
+
+            let enabled = self.enabled.load(Ordering::Relaxed);
+            let last_ssrc = self.last_ssrc.load(Ordering::Relaxed);
+            let ssrc = self.ssrc;
+            let sequencer = self.sequencer.clone();
+            let receiver = self.receiver.clone();
+        rtcp.on_packet(Box::new(move |data:&[u8]| {
+            Box::pin(async move {
+                DownTrack::handle_rtcp(enabled,data,last_ssrc,ssrc,sequencer,receiver).await
+            })
+        }));
 
         Ok(codec)
     }
 
-    async fn handle_rtcp(&mut self, data: &[u8]) -> Result<()> {
-        let enabled = self.enabled.load(Ordering::Relaxed);
+    async fn handle_rtcp(enabled: bool,data: &[u8],last_ssrc:u32,ssrc:u32,sequencer:Arc<AtomicSequencer>,receiver:  Arc<dyn Receiver + Send + Sync>) -> Result<()> {
+        // let enabled = self.enabled.load(Ordering::Relaxed);
         if !enabled {
             return Ok(());
         }
-
+    
         let mut buf = data;
-
+    
         let mut pkts = rtcp::packet::unmarshal(&mut buf)?;
-
+    
         let mut fwd_pkts: Vec<Box<dyn RtcpPacket>> = Vec::new();
         let mut pli_once = true;
         let mut fir_once = true;
-
+    
         let mut max_rate_packet_loss: u8 = 0;
         let mut expected_min_bitrate: u64 = 0;
-
-        let ssrc = self.last_ssrc.load(Ordering::Release);
-        if ssrc == 0 {
+    
+    
+        if last_ssrc == 0 {
             return Ok(());
         }
         
@@ -193,8 +198,8 @@ impl DownTrack {
                 {
                     if pli_once {
                         let mut pli = pic_loss_indication.clone();
-                        pli.media_ssrc = ssrc;
-                        pli.sender_ssrc = self.ssrc;
+                        pli.media_ssrc = last_ssrc;
+                        pli.sender_ssrc = ssrc;
             
                         fwd_pkts.push(Box::new(pli));
                         pli_once = false;
@@ -206,9 +211,9 @@ impl DownTrack {
             {
                 if fir_once{
                     let mut fir = full_intra_request.clone();
-                    fir.media_ssrc = ssrc;
-                    fir.sender_ssrc = self.ssrc;
-
+                    fir.media_ssrc = last_ssrc;
+                    fir.sender_ssrc = ssrc;
+    
                     fwd_pkts.push(Box::new(fir));
                     fir_once = false;
                 }
@@ -219,37 +224,51 @@ impl DownTrack {
                     {
                 if expected_min_bitrate == 0 || expected_min_bitrate > receiver_estimated_max_bitrate.bitrate as u64{
                     expected_min_bitrate = receiver_estimated_max_bitrate.bitrate as u64;
-
+    
                 }
             }
             else if let Some(receiver_report) = pkt.as_any().downcast_ref::<rtcp::receiver_report::ReceiverReport>(){
-
+    
                 for r in &receiver_report.reports{
                     if max_rate_packet_loss == 0 || max_rate_packet_loss < r.fraction_lost{
                         max_rate_packet_loss = r.fraction_lost;
                     }
-
+    
                 }
-
+    
             }
             else if let Some(transport_layer_nack) = pkt.as_any().downcast_ref::<rtcp::transport_feedbacks::transport_layer_nack::TransportLayerNack>()
             {
                 let mut nacked_packets:Vec<PacketMeta> = Vec::new();
                 for pair in &transport_layer_nack.nacks{
-
+    
                     let seq_numbers = pair.packet_list();
-                    let mut pairs= self.sequencer.get_seq_no_pairs(&seq_numbers[..]).await;
-
+                    // let sequencer = sequencer.lock.await;
+                  
+                    let mut pairs= sequencer.get_seq_no_pairs(&seq_numbers[..]).await;
+    
                     nacked_packets.append(&mut pairs);
-
-
+    
+                   // self.receiver.r
+    
+    
                 }
 
+                receiver.retransmit_packets(track, packets)
+    
             }
         }
+    
+        if fwd_pkts.len() > 0{
 
-        //let fwd_pkts
+            receiver.send_rtcp(fwd_pkts);
 
+        }
+    
         Ok(())
     }
+
+    
 }
+
+

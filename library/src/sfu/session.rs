@@ -1,4 +1,3 @@
 pub trait Session {
-    fn id() -> String;
-    
+   // fn id() -> String;
 }

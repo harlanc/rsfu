@@ -63,8 +63,8 @@ impl AtomicFactory {
         if let Some(reader) = factory.rtcp_readers.get_mut(&ssrc) {
             return reader.clone();
         }
-        let reader = Arc::new(Mutex::new(RTCPReader::new(ssrc)));
 
+        let reader = Arc::new(Mutex::new(RTCPReader::new(ssrc)));
         factory.rtcp_readers.insert(ssrc, reader.clone());
 
         reader
@@ -80,8 +80,8 @@ impl AtomicFactory {
         if let Some(reader) = factory.rtp_buffers.get_mut(&ssrc) {
             return reader.clone();
         }
+        
         let reader = Arc::new(Mutex::new(Buffer::new(ssrc)));
-
         factory.rtp_buffers.insert(ssrc, reader.clone());
 
         reader
