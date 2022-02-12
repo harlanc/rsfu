@@ -24,7 +24,7 @@ pub type NegotiateFn =
 
 pub struct Subscriber {
     id: String,
-    pc: RTCPeerConnection,
+    pc: Arc<RTCPeerConnection>,
     me: MediaEngine,
 
     tracks: HashMap<String, Vec<DownTrack>>,
@@ -47,8 +47,8 @@ impl Subscriber {
 
         let subscriber = Subscriber {
             id,
-            pc,
-            me,
+            pc: Arc::new(pc),
+            me: media_engine::get_subscriber_media_engine()?,
             tracks: HashMap::new(),
             channels: HashMap::new(),
             candidates: Vec::new(),
@@ -56,18 +56,32 @@ impl Subscriber {
             no_auto_subscribe: false,
         };
 
-        pc.on_ice_connection_state_change(Box::new(move |ice_state: RTCIceConnectionState| {
-            match ice_state {
-                RTCIceConnectionState::Failed | RTCIceConnectionState::Closed => {}
-                _ => subscriber.close(),
-            }
-        }))
-        .await;
+        subscriber.on_ice_connection_state_change().await;
 
         Ok(subscriber)
+    }
+
+    async fn on_ice_connection_state_change(&self) {
+        let pc_out = Arc::clone(&self.pc);
+        self.pc
+            .on_ice_connection_state_change(Box::new(move |ice_state: RTCIceConnectionState| {
+                let pc_in = Arc::clone(&pc_out);
+
+                Box::pin(async move {
+                    match ice_state {
+                        RTCIceConnectionState::Failed | RTCIceConnectionState::Closed => {
+                            pc_in.close().await;
+                        }
+                        _ => {}
+                    }
+                })
+            }))
+            .await;
     }
 
     async fn close(&mut self) -> Result<(), webrtc::Error> {
         self.pc.close().await
     }
+
+    //async fn add_data_channel(peer: Pee)
 }
