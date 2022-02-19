@@ -1,36 +1,45 @@
 use super::simulcast::SimulcastConfig;
 
+use super::down_track::DownTrack;
 use super::receiver::Receiver;
+use super::receiver::WebRTCReceiver;
+use super::session::Session;
+use super::sfu::WebRTCTransportConfig;
+use super::subscriber::Subscriber;
 use crate::twcc::twcc::Responder;
 use anyhow::Result;
 use async_trait::async_trait;
 use rtcp::packet::Packet as RtcpPacket;
+use rtcp::raw_packet::RawPacket;
+use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::Mutex;
+use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
 use webrtc::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
 use webrtc::track::track_remote::TrackRemote;
 
 use tokio::sync::{broadcast, mpsc, oneshot};
 
-pub type RtcpDataReceiver = mpsc::UnboundedReceiver<Vec<Box<dyn RtcpPacket>>>;
+pub type RtcpDataSender = mpsc::UnboundedSender<Vec<Box<Arc<dyn RtcpPacket + Send + Sync>>>>;
 
 #[async_trait]
 pub trait Router {
-    // ID() string
-    async fn id(&self) -> String;
-    // AddReceiver(receiver *webrtc.RTPReceiver, track *webrtc.TrackRemote, trackID, streamID string) (Receiver, bool)
+    fn id(&self) -> String;
     async fn add_receiver(
         &mut self,
         receiver: RTCRtpReceiver,
-    ) -> Result<Arc<dyn Receiver + Send + Sync>>;
-    // AddDownTracks(s *Subscriber, r Receiver) error
-    async fn add_down_tracks(&mut self) -> Result<()>;
-    // SetRTCPWriter(func([]rtcp.Packet) error)
-    async fn set_rtcp_writer(
+        track: TrackRemote,
+        track_id: String,
+        stream_id: String,
+    ) -> Result<Arc<Mutex<dyn Receiver + Send + Sync>>>;
+    fn add_down_tracks(&mut self) -> Result<()>;
+    fn set_rtcp_writer(&mut self, writer: fn(Vec<Box<dyn RtcpPacket + Send + Sync>>) -> Result<()>);
+    fn add_down_track(
         &mut self,
-        writer: fn(Vec<Box<dyn RtcpPacket + Send + Sync>>) -> Result<()>,
-    );
-    // AddDownTrack(s *Subscriber, r Receiver) (*DownTrack, error)
-    // Stop()
+        subscriber: Subscriber,
+        receiver: Arc<dyn Receiver + Send + Sync>,
+    ) -> Result<()>;
+    async fn stop(&mut self);
 }
 
 #[derive(Default, Clone)]
@@ -44,33 +53,115 @@ pub struct RouterConfig {
     simulcast: SimulcastConfig,
 }
 
-struct RouterImpl {
+struct RouterLocal {
     id: String,
-    twcc: Responder,
-    rtcp_channel: RtcpDataReceiver,
-    stop_channel: Option<mpsc::Sender<()>>,
+    twcc: Option<Responder>,
+    rtcp_channel: Arc<RtcpDataSender>,
+    stop_channel: mpsc::Sender<()>,
     config: RouterConfig,
+    session: Arc<Box<dyn Session + Send + Sync>>,
+    receivers: HashMap<String, Arc<Mutex<dyn Receiver + Send + Sync>>>,
+}
+impl RouterLocal {
+    pub fn new(
+        id: String,
+        session: Arc<Box<dyn Session + Send + Sync>>,
+        config: WebRTCTransportConfig,
+    ) -> Self {
+        let (s, r) = mpsc::unbounded_channel();
+
+        let (sender, _) = mpsc::channel(1);
+        Self {
+            id,
+            twcc: None,
+            rtcp_channel: Arc::new(s),
+            stop_channel: sender,
+            config: config.Router,
+            session,
+            receivers: HashMap::new(),
+        }
+    }
 }
 #[async_trait]
-impl Router for RouterImpl {
-    async fn id(&self) -> String {
+impl Router for RouterLocal {
+    fn id(&self) -> String {
         self.id
     }
-    // AddReceiver(receiver *webrtc.RTPReceiver, track *webrtc.TrackRemote, trackID, streamID string) (Receiver, bool)
+
+    async fn stop(&mut self) {
+        let rv = self.stop_channel.send(()).await;
+        if self.config.with_stats {}
+    }
+
     async fn add_receiver(
         &mut self,
         receiver: RTCRtpReceiver,
-    ) -> Result<Arc<dyn Receiver + Send + Sync>> {
+        track: TrackRemote,
+        track_id: String,
+        stream_id: String,
+    ) -> Result<Arc<Mutex<dyn Receiver + Send + Sync>>> {
+        let publish = false;
+
+        match track.kind() {
+            RTPCodecType::Audio => {
+                if let Some(observer) = self.session.audio_obserber() {
+                    observer.add_stream(stream_id).await;
+                }
+            }
+            RTPCodecType::Video => {
+                if self.twcc.is_none() {
+                    self.twcc = Some(Responder::new(track.ssrc()));
+
+                    let sender = Arc::clone(&self.rtcp_channel);
+                    self.twcc
+                        .unwrap()
+                        .on_feedback(Box::new(
+                            move |rtcp_packet: Arc<dyn RtcpPacket + Send + Sync>| {
+                                let sender_in = Arc::clone(&sender);
+                                Box::pin(async move {
+                                    let mut data = Vec::new();
+                                    data.push(Box::new(rtcp_packet));
+                                    sender_in.send(data);
+                                })
+                            },
+                        ))
+                        .await;
+                }
+            }
+            RTPCodecType::Unspecified => {}
+        }
+        let mut result_receiver;
+
+        if let Some(recv) = self.receivers.get(&track_id) {
+            result_receiver = recv.clone();
+        } else {
+            let rv = WebRTCReceiver::new(receiver, track, self.id).await;
+            result_receiver = Arc::new(Mutex::new(rv));
+        }
+
+        Ok(result_receiver)
     }
-    // AddDownTracks(s *Subscriber, r Receiver) error
-    async fn add_down_tracks(&mut self) -> Result<()> {
+
+    fn add_down_tracks(&mut self) -> Result<()> {
         Ok(())
     }
-    // SetRTCPWriter(func([]rtcp.Packet) error)
-    async fn set_rtcp_writer(
+
+    fn add_down_track(
+        &mut self,
+        subscriber: Subscriber,
+        receiver: Arc<dyn Receiver + Send + Sync>,
+    ) -> Result<()> {
+        // subscriber.me.
+
+        // let rv =  DownTrack::new(c, r, peer_id, mt)
+
+        Ok(())
+    }
+
+    fn set_rtcp_writer(
         &mut self,
         writer: fn(Vec<Box<dyn RtcpPacket + Send + Sync>>) -> Result<()>,
     ) {
-        Ok(())
+        // Ok(());
     }
 }

@@ -17,7 +17,7 @@ use crate::stats::stream::Stream;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 pub type RtcpDataReceiver = mpsc::UnboundedReceiver<Vec<Box<dyn RtcpPacket>>>;
-pub trait Receiver {
+pub trait Receiver: Send + Sync {
     fn track_id(&self) -> String;
     fn stream_id(&self) -> String;
     fn codec(&self) -> RTCRtpCodecParameters;
@@ -151,7 +151,7 @@ impl Receiver for WebRTCReceiver {
                 for l in 0..layer {
                     if let Some(dts) = self.down_tracks[layer] {
                         for dt in dts {
-                          //  dt
+                            //  dt
                         }
                     }
 

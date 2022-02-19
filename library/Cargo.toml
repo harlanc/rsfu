@@ -12,7 +12,7 @@ edition = "2018"
 
 [dependencies]
 bytesio = "0.1.27"
-rtcp = "0.6.3"
+rtcp = "0.6.5"
 rtp = "0.6.3"
 sdp = "0.4.0"
 turn = "0.5.2"

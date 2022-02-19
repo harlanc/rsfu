@@ -36,7 +36,7 @@ impl AudioObserver {
         }
     }
 
-    async fn add_stream(&mut self, stream_id: String) {
+    pub async fn add_stream(&mut self, stream_id: String) {
         self.streams.lock().await.push(AudioStream {
             id: stream_id,
             ..Default::default()

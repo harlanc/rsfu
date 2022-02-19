@@ -39,7 +39,7 @@ struct Candidates {
 pub struct WebRTCTransportConfig {
     pub configuration: RTCConfiguration,
     pub setting: SettingEngine,
-    Router: RouterConfig,
+    pub Router: RouterConfig,
 }
 #[derive(Clone)]
 struct WebRTCTimeoutsConfig {

@@ -18,6 +18,8 @@ use rtcp::header::PacketType;
 use rtcp::transport_feedbacks::transport_layer_cc::SymbolSizeTypeTcc;
 use rtcp::transport_feedbacks::transport_layer_cc::SymbolTypeTcc;
 
+use rtcp::packet::Packet as RtcpPacket;
+
 const BASE_SEQUENCE_NUMBER_OFFSET: i64 = 8;
 const PACKET_STATUS_COUNT_OFFSET: i64 = 10;
 const REFERENCE_TIME_OFFSET: i64 = 12;
@@ -25,8 +27,13 @@ const REFERENCE_TIME_OFFSET: i64 = 12;
 const TCC_REPORT_DELTA: f64 = 1e8;
 const TCC_REPORT_DELTA_AFTER_MARK: f64 = 50e6;
 
-pub type OnResponderFeedbackFn =
-    Box<dyn (FnMut(RawPacket) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>) + Send + Sync>;
+pub type OnResponderFeedbackFn = Box<
+    dyn (FnMut(
+            Arc<dyn RtcpPacket + Send + Sync>,
+        ) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>)
+        + Send
+        + Sync,
+>;
 
 #[derive(Default, Clone)]
 pub struct RtpExtInfo {
@@ -121,6 +128,11 @@ impl Responder {
                 || ext_infos.len() > 100
                 || (marker && delta as f64 >= TCC_REPORT_DELTA_AFTER_MARK))
         {}
+    }
+
+    pub async fn on_feedback(&mut self, f: OnResponderFeedbackFn) {
+        let mut handler = self.on_feedback_handler.lock().await;
+        *handler = Some(f);
     }
 
     async fn build_transport_cc_packet(&mut self) -> Result<RawPacket> {

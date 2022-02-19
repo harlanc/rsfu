@@ -187,7 +187,7 @@ use std::rc::Rc;
 
 fn on_data_channel_callback(channel: &RTCDataChannel) {}
 impl Peer {
-    fn new(meta: PeerMeta, conf: PeerConfig) -> Result<Self> {
+    pub(crate) fn new(meta: PeerMeta, conf: PeerConfig) -> Result<Self> {
         let ice_options = RTCIceGatherOptions {
             ice_servers: conf.ice_servers,
             ..Default::default()
