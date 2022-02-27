@@ -153,33 +153,59 @@ impl DownTrack {
         let rtcp_buffer = self.buffer_factory.get_or_new_rtcp_buffer(t.ssrc()).await;
         let mut rtcp = rtcp_buffer.lock().await;
 
-        //Box::new(move |d: Arc<RTCDataChannel>| {
-
-            let enabled = self.enabled.load(Ordering::Relaxed);
-            let last_ssrc = self.last_ssrc.load(Ordering::Relaxed);
-            let ssrc = self.ssrc;
-            let sequencer = self.sequencer.clone();
-            let receiver = self.receiver.clone();
-        rtcp.on_packet(Box::new(move |data:&[u8]| {
+        let enabled = self.enabled.load(Ordering::Relaxed);
+        let last_ssrc = self.last_ssrc.load(Ordering::Relaxed);
+        let ssrc = self.ssrc;
+        let sequencer = self.sequencer.clone();
+        let receiver = self.receiver.clone();
+        
+        rtcp.on_packet(Box::new(move |data:Vec<u8>| {
+            let sequencer2 = sequencer.clone();
+            let receiver2 = receiver.clone();
             Box::pin(async move {
-                DownTrack::handle_rtcp(enabled,data,last_ssrc,ssrc,sequencer,receiver).await
+                DownTrack::handle_rtcp(enabled,data,last_ssrc,ssrc,sequencer2,receiver2).await
             })
-        }));
+        })).await;
 
+        if self.codec.mime_type.starts_with("video/"){
+            self.sequencer = Arc::new(AtomicSequencer::new(self.max_track));
+        }
+        
+        let mut handler = self.on_bind_handler.lock().await;
+        if let Some(f) = &mut *handler {
+            f().await;
+        }
+        self.bound.store(true, Ordering::Relaxed);
         Ok(codec)
     }
 
-    async fn handle_rtcp(enabled: bool,data: &[u8],last_ssrc:u32,ssrc:u32,sequencer:Arc<AtomicSequencer>,receiver:  Arc<dyn Receiver + Send + Sync>) -> Result<()> {
-        // let enabled = self.enabled.load(Ordering::Relaxed);
+     fn unbind(&mut self, t: TrackLocalContext) {
+         self.bound.store(false, Ordering::Relaxed);
+    }
+
+
+    async fn handle_rtcp(enabled: bool,data: Vec<u8>,last_ssrc:u32,ssrc:u32,sequencer:Arc<AtomicSequencer>,receiver:  Arc<dyn Receiver + Send + Sync>)  {
+       // let enabled = self.enabled.load(Ordering::Relaxed);
         if !enabled {
-            return Ok(());
+            return ;
         }
     
-        let mut buf = data;
+        let mut buf = &data[..];
     
-        let mut pkts = rtcp::packet::unmarshal(&mut buf)?;
+        let mut pkts_result = rtcp::packet::unmarshal(&mut buf);
+        let mut pkts ;
+
+        match pkts_result{
+            Ok(pkts_rv) =>{
+                pkts = pkts_rv;
+
+            }
+            Err(_) =>{
+                return;
+            }
+        }
     
-        let mut fwd_pkts: Vec<Box<dyn RtcpPacket>> = Vec::new();
+        let mut fwd_pkts: Vec<Box<dyn RtcpPacket + Send + Sync>> = Vec::new();
         let mut pli_once = true;
         let mut fir_once = true;
     
@@ -188,7 +214,7 @@ impl DownTrack {
     
     
         if last_ssrc == 0 {
-            return Ok(());
+            return;
         }
         
         for pkt in &mut pkts {
@@ -242,7 +268,7 @@ impl DownTrack {
                 let mut nacked_packets:Vec<PacketMeta> = Vec::new();
                 for pair in &transport_layer_nack.nacks{
     
-                    let seq_numbers = pair.packet_list();
+                                 let seq_numbers = pair.packet_list();
                     // let sequencer = sequencer.lock.await;
                   
                     let mut pairs= sequencer.get_seq_no_pairs(&seq_numbers[..]).await;
@@ -265,8 +291,8 @@ impl DownTrack {
 
         }
     
-        Ok(())
-    }
+        // Ok(())
+    }   
 
     
 }

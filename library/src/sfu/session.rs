@@ -29,12 +29,12 @@ pub trait Session {
     fn get_peer(&self, peer_id: String) -> Option<Arc<dyn Peer + Send + Sync>>;
     fn remove_peer(&mut self, peer: Arc<dyn Peer + Send + Sync>);
     async fn add_relay_peer(&mut self, peer_id: String, signal_data: String) -> Result<String>;
-    fn audio_obserber(&self) -> Option<AudioObserver>;
+    fn audio_obserber(&self) -> Option<&mut AudioObserver>;
 
     fn add_data_channel(&mut self, owner: String, dc: RTCDataChannel);
-    fn get_data_channel_middlewares(&self) -> Vec<Option<RTCDataChannel>>;
+    fn get_data_channel_middlewares(&self) -> Vec<RTCDataChannel>;
     fn get_fanout_data_channel_labels(&self) -> Vec<String>;
-    fn get_data_channels(&self, peer_id: String, label: String) -> Vec<Option<RTCDataChannel>>;
+    fn get_data_channels(&self, peer_id: String, label: String) -> Vec<Arc<RTCDataChannel>>;
     fn fanout_message(&self, origin: String, label: String, msg: DataChannelMessage);
     fn peers(&self) -> Vec<Arc<dyn Peer + Send + Sync>>;
     fn relay_peers(&self) -> Vec<Option<RelayPeer>>;
@@ -50,7 +50,7 @@ pub struct SessionLocal {
     closed: AtomicBool,
     audio_observer: Option<AudioObserver>,
     fanout_data_channels: Vec<String>,
-    data_channels: Vec<Option<RTCDataChannel>>,
+    data_channels: Vec<Arc<RTCDataChannel>>,
     on_close_handler: fn(),
 }
 
@@ -63,19 +63,19 @@ impl SessionLocal {
     //  }
 
     fn id(&self) -> String {
-        self.id
+        self.id.clone()
     }
 
-    fn audio_obserber(&self) -> Option<AudioObserver> {
-        self.audio_observer
+    fn audio_obserber(&mut self) -> Option<&mut AudioObserver> {
+        self.audio_observer.as_mut()
     }
 
-    fn get_data_channel_middlewares(&self) -> Vec<Option<RTCDataChannel>> {
-        self.data_channels
+    fn get_data_channel_middlewares(&self) -> Vec<Arc<RTCDataChannel>> {
+        self.data_channels.clone()
     }
 
     fn get_fanout_data_channel_labels(&self) -> Vec<String> {
-        self.fanout_data_channels
+        self.fanout_data_channels.clone()
     }
 
     fn add_peer(&mut self, peer: Arc<dyn Peer + Send + Sync>) {

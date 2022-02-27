@@ -8,11 +8,9 @@ use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-pub type OnPacketFn = Box<
-    dyn (FnMut(&[u8]) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>) + Send + Sync,
->;
-pub type OnCloseFn =
-    Box<dyn (FnMut() -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>) + Send + Sync>;
+pub type OnPacketFn =
+    Box<dyn (FnMut(Vec<u8>) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>) + Send + Sync>;
+pub type OnCloseFn = Box<dyn (FnMut() -> Pin<Box<dyn Future<Output = ()> + Send>>) + Send + Sync>;
 
 pub struct RTCPReader {
     ssrc: u32,
@@ -56,7 +54,7 @@ impl RTCPReader {
     pub fn read(&mut self, buff: &mut [u8]) -> Result<usize> {
         Ok(0)
     }
-    pub async fn write(&mut self, p: &[u8]) -> Result<u32> {
+    pub async fn write(&mut self, p: Vec<u8>) -> Result<u32> {
         if self.closed.load(Ordering::Relaxed) {
             return Err(Error::ErrIOEof.into());
         }

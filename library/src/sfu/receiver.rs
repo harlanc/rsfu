@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use crate::stats::stream::Stream;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
-pub type RtcpDataReceiver = mpsc::UnboundedReceiver<Vec<Box<dyn RtcpPacket>>>;
+pub type RtcpDataReceiver = mpsc::UnboundedReceiver<Vec<Box<dyn RtcpPacket + Send + Sync>>>;
 pub trait Receiver: Send + Sync {
     fn track_id(&self) -> String;
     fn stream_id(&self) -> String;
@@ -32,7 +32,7 @@ pub trait Receiver: Send + Sync {
     fn retransmit_packets(&self, track: Arc<DownTrack>, packets: &[PacketMeta]) -> Result<()>;
     fn delete_down_track(&self, layer: u8, id: String);
     fn on_close_handler(&self, func: fn());
-    fn send_rtcp(&self, p: Vec<Box<dyn RtcpPacket>>);
+    fn send_rtcp(&self, p: Vec<Box<dyn RtcpPacket + Send + Sync>>);
     fn set_rtcp_channel(&self);
     fn get_sender_report_time(&self, layer: u8) -> (u32, u64);
 }
@@ -149,11 +149,11 @@ impl Receiver for WebRTCReceiver {
         if self.is_simulcast {
             if best_quality_first && (self.available[2].load(Ordering::Relaxed) || layer == 2) {
                 for l in 0..layer {
-                    if let Some(dts) = self.down_tracks[layer] {
-                        for dt in dts {
-                            //  dt
-                        }
-                    }
+                    // if let Some(dts) = self.down_tracks[layer] {
+                    //     for dt in dts {
+                    //         //  dt
+                    //     }
+                    // }
 
                     // for dt in dts {}
                 }
@@ -174,7 +174,7 @@ impl Receiver for WebRTCReceiver {
     }
     fn delete_down_track(&self, layer: u8, id: String) {}
     fn on_close_handler(&self, func: fn()) {}
-    fn send_rtcp(&self, p: Vec<Box<dyn RtcpPacket>>) {}
+    fn send_rtcp(&self, p: Vec<Box<dyn RtcpPacket + Send + Sync>>) {}
     fn set_rtcp_channel(&self) {}
     fn get_sender_report_time(&self, layer: u8) -> (u32, u64) {
         (0, 0)

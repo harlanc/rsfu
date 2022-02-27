@@ -12,6 +12,6 @@ struct PeerLocal {
 
 impl Peer for PeerLocal {
     fn id(&self) -> String {
-        self.id
+        self.id.clone()
     }
 }

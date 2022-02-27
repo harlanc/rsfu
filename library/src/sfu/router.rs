@@ -85,7 +85,7 @@ impl RouterLocal {
 #[async_trait]
 impl Router for RouterLocal {
     fn id(&self) -> String {
-        self.id
+        self.id.clone()
     }
 
     async fn stop(&mut self) {
@@ -104,28 +104,26 @@ impl Router for RouterLocal {
 
         match track.kind() {
             RTPCodecType::Audio => {
-                if let Some(observer) = self.session.audio_obserber() {
+                if let Some(mut observer) =  self.session.audio_obserber() {
                     observer.add_stream(stream_id).await;
                 }
             }
             RTPCodecType::Video => {
-                if self.twcc.is_none() {
-                    self.twcc = Some(Responder::new(track.ssrc()));
-
+                if let Some(twcc) = &mut self.twcc {
                     let sender = Arc::clone(&self.rtcp_channel);
-                    self.twcc
-                        .unwrap()
-                        .on_feedback(Box::new(
-                            move |rtcp_packet: Arc<dyn RtcpPacket + Send + Sync>| {
-                                let sender_in = Arc::clone(&sender);
-                                Box::pin(async move {
-                                    let mut data = Vec::new();
-                                    data.push(Box::new(rtcp_packet));
-                                    sender_in.send(data);
-                                })
-                            },
-                        ))
-                        .await;
+                    twcc.on_feedback(Box::new(
+                        move |rtcp_packet: Arc<dyn RtcpPacket + Send + Sync>| {
+                            let sender_in = Arc::clone(&sender);
+                            Box::pin(async move {
+                                let mut data = Vec::new();
+                                data.push(Box::new(rtcp_packet));
+                                sender_in.send(data);
+                            })
+                        },
+                    ))
+                    .await;
+                } else {
+                    self.twcc = Some(Responder::new(track.ssrc()));
                 }
             }
             RTPCodecType::Unspecified => {}
@@ -135,7 +133,7 @@ impl Router for RouterLocal {
         if let Some(recv) = self.receivers.get(&track_id) {
             result_receiver = recv.clone();
         } else {
-            let rv = WebRTCReceiver::new(receiver, track, self.id).await;
+            let rv = WebRTCReceiver::new(receiver, track, self.id.clone()).await;
             result_receiver = Arc::new(Mutex::new(rv));
         }
 

@@ -115,15 +115,15 @@ impl Message {
 }
 
 pub struct PeerConfig {
-    setting_engine: SettingEngine,
-    ice_servers: Vec<RTCIceServer>,
+    pub setting_engine: SettingEngine,
+    pub ice_servers: Vec<RTCIceServer>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeerMeta {
     #[serde(rename = "peerId")]
-    peer_id: String,
+    pub peer_id: String,
     #[serde(rename = "sessionId")]
-    session_id: String,
+    pub session_id: String,
 }
 
 pub struct Options {

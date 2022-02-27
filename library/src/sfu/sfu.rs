@@ -141,6 +141,7 @@ impl WebRTCTransportConfig {
             "plan-b" => {
                 sdp_semantics = RTCSdpSemantics::PlanB;
             }
+            _ => {}
         }
 
         if c.webrtc.timeouts.ice_disconnected_timeout == 0
