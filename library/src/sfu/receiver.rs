@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use webrtc::error::{Error, Result};
 
 use crate::stats::stream::Stream;
+use std::sync::Weak;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 pub type RtcpDataReceiver = mpsc::UnboundedReceiver<Vec<Box<dyn RtcpPacket + Send + Sync>>>;
@@ -26,7 +27,7 @@ pub trait Receiver: Send + Sync {
     fn set_track_meta(&mut self, track_id: String, stream_id: String);
     fn add_up_track(&mut self, track: TrackRemote, buffer: Buffer, best_quality_first: bool);
     fn add_down_track(&mut self, track: Arc<DownTrack>, best_quality_first: bool);
-    fn switch_down_track(&self, track: Arc<DownTrack>, layer: u8) -> Result<()>;
+    fn switch_down_track(&self, track: Weak<DownTrack>, layer: u8) -> Result<()>;
     fn get_bitrate(&self) -> Vec<u64>;
     fn get_max_temporal_layer(&self) -> Vec<i32>;
     fn retransmit_packets(&self, track: Arc<DownTrack>, packets: &[PacketMeta]) -> Result<()>;
@@ -161,7 +162,7 @@ impl Receiver for WebRTCReceiver {
         }
     }
     fn add_down_track(&mut self, track: Arc<DownTrack>, best_quality_first: bool) {}
-    fn switch_down_track(&self, track: Arc<DownTrack>, layer: u8) -> Result<()> {
+    fn switch_down_track(&self, track: Weak<DownTrack>, layer: u8) -> Result<()> {
         Ok(())
     }
 

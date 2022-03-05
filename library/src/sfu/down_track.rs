@@ -16,7 +16,12 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Once;
+use std::time::SystemTime;
 use tokio::sync::Mutex;
+use webrtc::rtcp::sender_report::SenderReport;
+use webrtc::rtcp::source_description::SdesType;
+use webrtc::rtcp::source_description::SourceDescriptionChunk;
+use webrtc::rtcp::source_description::SourceDescriptionItem;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::rtp_transceiver::RTCRtpTransceiver;
 
@@ -67,8 +72,8 @@ pub struct DownTrack {
     last_ts: u32,
 
     pub simulcast: SimulcastTrackHelpers,
-    max_spatial_layer: i32,
-    max_temporal_layer: i32,
+    max_spatial_layer: AtomicI32,
+    max_temporal_layer: AtomicI32,
 
     codec: RTCRtpCodecCapability,
     receiver: Arc<dyn Receiver + Send + Sync>,
@@ -79,8 +84,8 @@ pub struct DownTrack {
 
     close_once: Once,
 
-    octet_count: u32,
-    packet_count: u32,
+    octet_count: AtomicU32,
+    packet_count: AtomicU32,
     max_packet_ts: u32,
 }
 
@@ -118,8 +123,8 @@ impl DownTrack {
             last_ts: 0,
 
             simulcast: SimulcastTrackHelpers::new(),
-            max_spatial_layer: 0,
-            max_temporal_layer: 0,
+            max_spatial_layer: AtomicI32::new(0),
+            max_temporal_layer: AtomicI32::new(0),
 
             codec: c,
             receiver: r,
@@ -130,8 +135,8 @@ impl DownTrack {
 
             close_once: Once::new(),
 
-            octet_count: 0,
-            packet_count: 0,
+            octet_count: AtomicU32::new(0),
+            packet_count: AtomicU32::new(0),
             max_packet_ts: 0,
         }
     }
@@ -270,7 +275,7 @@ impl DownTrack {
         self.current_spatial_layer.load(Ordering::Relaxed)
     }
 
-    fn switch_spatial_layer(&mut self, target_layer: i32, set_as_max: bool) -> Result<()> {
+    fn switch_spatial_layer(self: &Arc<Self>, target_layer: i32, set_as_max: bool) -> Result<()> {
         match self.track_type {
             DownTrackType::SimulcastDownTrack => {
                 let csl = self.current_spatial_layer.load(Ordering::Relaxed);
@@ -279,16 +284,180 @@ impl DownTrack {
                 }
                 match self
                     .receiver
-                    .switch_down_track(Arc::new(self), target_layer as u8)
+                    .switch_down_track(Arc::downgrade(self), target_layer as u8)
                 {
-                    Ok(_) => {}
+                    Ok(_) => {
+                        self.target_spatial_layer
+                            .store(target_layer, Ordering::Relaxed);
+                        if set_as_max {
+                            self.max_spatial_layer
+                                .store(target_layer, Ordering::Relaxed);
+                        }
+                    }
                     _ => {}
                 }
+                return Ok(());
             }
             _ => {}
         }
 
-        Ok(())
+        Err(WEBRTCError::new(String::from(
+            "Error spatial not supported.",
+        )))
+    }
+
+    fn switch_spatial_layer_done(&mut self, layer: i32) {
+        self.current_spatial_layer.store(layer, Ordering::Relaxed);
+    }
+
+    fn untrack_layers_change(self: &Arc<Self>, available_layers: &[u16]) -> Result<i64> {
+        match self.track_type {
+            DownTrackType::SimpleDownTrack => {
+                let current_layer = self.current_spatial_layer.load(Ordering::Relaxed) as u16;
+                let max_layer = self.max_spatial_layer.load(Ordering::Relaxed) as u16;
+
+                let mut min_found: u16 = 0;
+                let mut max_found: u16 = 0;
+                let mut layer_found: bool = false;
+
+                for target in available_layers.to_vec() {
+                    if target <= max_layer {
+                        if target > max_found {
+                            max_found = target;
+                            layer_found = true;
+                        }
+                    } else {
+                        if min_found > target {
+                            min_found = target;
+                        }
+                    }
+                }
+
+                let mut target_layer: u16 = 0;
+                if layer_found {
+                    target_layer = max_found;
+                } else {
+                    target_layer = min_found;
+                }
+
+                if current_layer != target_layer {
+                    if let Err(_) = self.switch_spatial_layer(target_layer as i32, false) {
+                        return Ok(target_layer as i64);
+                    }
+                }
+
+                return Ok(target_layer as i64);
+            }
+            _ => {}
+        }
+        Err(WEBRTCError::new(format!(
+            "downtrack {} does not support simulcast",
+            self.id
+        )))
+    }
+
+    fn switch_temporal_layer(&mut self, target_layer: i32, set_as_max: bool) {
+        match self.track_type {
+            DownTrackType::SimulcastDownTrack => {
+                let layer = self.temporal_layer.load(Ordering::Relaxed);
+                let current_layer = layer as u16;
+                let current_target_layer = (layer >> 16) as u16;
+
+                if current_layer != current_target_layer {
+                    return;
+                }
+
+                self.temporal_layer.store(
+                    (target_layer << 16) | (current_layer as i32),
+                    Ordering::Relaxed,
+                );
+
+                if set_as_max {
+                    self.max_temporal_layer
+                        .store(target_layer, Ordering::Relaxed);
+                }
+            }
+
+            _ => {}
+        }
+    }
+
+    async fn on_close_hander(&mut self, f: OnCloseFn) {
+        let mut handler = self.on_close_handler.lock().await;
+        *handler = Some(f);
+    }
+
+    async fn on_bind(&mut self, f: OnBindFn) {
+        let mut handler = self.on_bind_handler.lock().await;
+        *handler = Some(f);
+    }
+
+    async fn create_source_description_chunks(&self) -> Option<Vec<SourceDescriptionChunk>> {
+        if !self.bound.load(Ordering::Relaxed) {
+            return None;
+        }
+
+        let mid = self.transceiver.as_ref().unwrap().mid().await;
+
+        Some(vec![
+            SourceDescriptionChunk {
+                source: self.ssrc,
+                items: vec![SourceDescriptionItem {
+                    sdes_type: SdesType::SdesCname,
+                    text: Bytes::copy_from_slice(self.stream_id.as_bytes()),
+                }],
+            },
+            SourceDescriptionChunk {
+                source: self.ssrc,
+                items: vec![SourceDescriptionItem {
+                    sdes_type: SdesType::SdesCname,
+                    text: Bytes::copy_from_slice(mid.as_bytes()),
+                }],
+            },
+        ])
+    }
+
+    fn create_sender_report(&self) -> Option<SenderReport> {
+        if !self.bound.load(Ordering::Relaxed) {
+            return None;
+        }
+
+        let (sr_rtp, sr_ntp) = self
+            .receiver
+            .get_sender_report_time(self.current_spatial_layer.load(Ordering::Relaxed) as u8);
+
+        if sr_rtp == 0 {
+            return None;
+        }
+
+        let now = SystemTime::now();
+        let now_ntp = helpers::to_ntp_time(now);
+
+        let clock_rate = self.codec.clock_rate;
+
+        //todo
+        let mut diff: u32 = 0;
+        if diff < 0 {
+            diff = 0;
+        }
+
+        let (octets, packets) = self.get_sr_status();
+
+        Some(SenderReport {
+            ssrc: self.ssrc,
+            ntp_time: u64::from(now_ntp),
+            rtp_time: sr_rtp + diff,
+            packet_count: packets,
+            octet_count: octets,
+            ..Default::default()
+        })
+    }
+
+    fn get_sr_status(&self) -> (u32, u32) {
+        let octets = self.octet_count.load(Ordering::Relaxed);
+        let packets = self.packet_count.load(Ordering::Relaxed);
+
+        (octets, packets)
     }
 
     async fn handle_rtcp(

@@ -1,8 +1,8 @@
 use super::down_track::DownTrack;
 use crate::buffer;
 use crate::buffer::buffer::ExtPacket;
-use webrtc::error::Result;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, Ordering};
+use webrtc::error::Result;
 
 use std::time::Duration;
 use std::time::SystemTime;
@@ -119,7 +119,7 @@ fn fast_forward_timestamp_amount(newest_timestamp: u32, reference_timestamp: u32
     newest_timestamp - reference_timestamp
 }
 
-struct NtpTime {
+pub struct NtpTime {
     ntp_time: u64,
 }
 
@@ -140,21 +140,27 @@ impl NtpTime {
 
         now.checked_add(self.duration())
     }
+}
 
-    fn to_ntp_time(&self, t: SystemTime) -> NtpTime {
-        let duration = t.duration_since(UNIX_EPOCH).unwrap();
-        let mut nsec = duration.as_nanos() as u64;
+impl From<NtpTime> for u64 {
+    fn from(time: NtpTime) -> u64 {
+        time.ntp_time
+    }
+}
 
-        let sec = nsec / 1000000000;
-        nsec = (nsec - sec * 1000000000) << 32;
-        let mut frac = nsec / 1000000000;
+pub fn to_ntp_time(t: SystemTime) -> NtpTime {
+    let duration = t.duration_since(UNIX_EPOCH).unwrap();
+    let mut nsec = duration.as_nanos() as u64;
 
-        if nsec % 1000000000 >= 1000000000 / 2 {
-            frac += 1;
-        }
+    let sec = nsec / 1000000000;
+    nsec = (nsec - sec * 1000000000) << 32;
+    let mut frac = nsec / 1000000000;
 
-        NtpTime {
-            ntp_time: sec << 32 | frac,
-        }
+    if nsec % 1000000000 >= 1000000000 / 2 {
+        frac += 1;
+    }
+
+    NtpTime {
+        ntp_time: sec << 32 | frac,
     }
 }
