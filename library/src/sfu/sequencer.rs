@@ -80,7 +80,7 @@ impl AtomicSequencer {
         }
     }
 
-    async fn push(
+    pub async fn push(
         &mut self,
         sn: u16,
         off_sn: u16,

@@ -49,9 +49,9 @@ struct PendingPackets {
 pub struct ExtPacket {
     pub head: bool,
     cycle: u32,
-    arrival: i64,
+    pub arrival: i64,
     pub packet: Packet,
-    key_frame: bool,
+    pub key_frame: bool,
     pub payload: VP8,
 }
 #[derive(Debug, PartialEq, Default, Clone)]

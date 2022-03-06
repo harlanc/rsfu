@@ -1,6 +1,7 @@
 use super::down_track::DownTrack;
 use crate::buffer;
 use crate::buffer::buffer::ExtPacket;
+
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, Ordering};
 use webrtc::error::Result;
 
@@ -10,12 +11,14 @@ use std::time::UNIX_EPOCH;
 use webrtc::rtp_transceiver::rtp_codec::{RTCRtpCodecParameters, RTPCodecType};
 use webrtc::Error as WebrtcError;
 
+use bytes::{Buf, BufMut, Bytes,BytesMut};
+
 // setVp8TemporalLayer is a helper to detect and modify accordingly the vp8 payload to reflect
 // temporal changes in the SFU.
 // VP8 temporal layers implemented according https://tools.ietf.org/html/rfc7741
 
-fn set_vp8_temporal_layer(p: ExtPacket, d: &mut DownTrack) -> (Vec<u8>, u16, u8, bool) {
-    let pkt = p.payload;
+pub fn set_vp8_temporal_layer(ext_packet: ExtPacket, d: &mut DownTrack) -> (Bytes, u16, u8, bool) {
+    let pkt = ext_packet.payload;
     let layer = d.temporal_layer.load(Ordering::Relaxed);
 
     let current_layer = layer as u16;
@@ -29,19 +32,19 @@ fn set_vp8_temporal_layer(p: ExtPacket, d: &mut DownTrack) -> (Vec<u8>, u16, u8,
             )
         }
     } else if pkt.tid > current_layer as u8 {
-        return (Vec::new(), 0, 0, true);
+        return (Bytes::default(), 0, 0, true);
     }
 
-    let mut rv_buf: Vec<u8> = Vec::new();
+    let mut rv_buf  = BytesMut::new();
 
-    let length = p.packet.payload.len();
-    rv_buf.extend_from_slice(&d.payload[..length]);
-    rv_buf.extend_from_slice(&p.packet.payload[..]);
+    let length = ext_packet.packet.payload.len();
+    rv_buf.copy_from_slice(&d.payload[..length]);
+    rv_buf.copy_from_slice(&ext_packet.packet.payload[..]);
 
     let pic_id = pkt.picture_id - d.simulcast.ref_pic_id + d.simulcast.p_ref_pic_id + 1;
     let tlz0_idx = pkt.tl0_picture_idx - d.simulcast.ref_tlz_idx + d.simulcast.p_ref_tlz_idx + 1;
 
-    if p.head {
+    if ext_packet.head {
         d.simulcast.l_pic_id = pic_id;
         d.simulcast.l_tlz_idx = tlz0_idx;
     }
@@ -55,24 +58,45 @@ fn set_vp8_temporal_layer(p: ExtPacket, d: &mut DownTrack) -> (Vec<u8>, u16, u8,
         pkt.mbit,
     );
 
-    (rv_buf, 0, 0, true)
+    (rv_buf.freeze(), 0, 0, true)
 }
 
 fn modify_vp8_temporal_payload(
-    payload: &mut [u8],
+    payload: &mut BytesMut,
     pic_id_idx: usize,
     tlz0_idx: usize,
     pic_id: u16,
     tlz0_id: u8,
     m_bit: bool,
 ) {
+    // payload.get_mut(index)
+    // let payload_slice = &mut payload[..];
+   // let slice = mut payload.as_slice();
+
     payload[pic_id_idx] = (pic_id >> 8) as u8;
+    if let Some(pic_id_ref) = payload.get_mut(pic_id_idx) {
+        *pic_id_ref = (pic_id >> 8) as u8;
+    }
+    // payload_slice[pic_id_idx] = (pic_id >> 8) as u8;
     if m_bit {
-        payload[pic_id_idx] = 0x80;
-        payload[pic_id_idx + 1] = pic_id as u8;
+
+        payload[pic_id_idx]  |= 0x80;
+        payload[pic_id_idx + 1]  =pic_id as u8;
+
+        // if let Some(ref0) = payload.get_mut(pic_id_idx) {
+        //     *ref0 |= 0x80;
+        // }
+
+        // if let Some(ref1) = payload.get_mut(pic_id_idx + 1) {
+        //     *ref1 = pic_id as u8;
+        // }
     }
 
-    payload[tlz0_idx] = tlz0_id;
+    payload[tlz0_idx]  = tlz0_id;
+
+    // if let Some(ref2) = payload.get_mut(tlz0_idx) {
+    //     *ref2 = tlz0_id;
+    // }
 }
 
 // Do a fuzzy find for a codec in the list of codecs

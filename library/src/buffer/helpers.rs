@@ -1,5 +1,6 @@
 use crate::buffer::errors::*;
 use anyhow::Result;
+
 // VP8 is a helper to get temporal data from VP8 packet header
 /*
     VP8 Payload Descriptor
@@ -20,7 +21,7 @@ use anyhow::Result;
 */
 #[derive(Debug, Eq, PartialEq, Default, Clone, Copy)]
 pub struct VP8 {
-    temporal_supported: bool,
+    pub temporal_supported: bool,
     // Optional Header
     pub picture_id: u16, /* 8 or 16 bits, picture ID */
     pub picture_id_idx: i32,

@@ -4,6 +4,7 @@
 use super::sequencer::{self, AtomicSequencer};
 use super::simulcast::SimulcastTrackHelpers;
 use atomic::Atomic;
+use rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use rtp::extension::audio_level_extension::AudioLevelExtension;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU32, Ordering};
 use webrtc::error::{Error as WEBRTCError, Result};
@@ -17,14 +18,16 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Once;
 use std::time::SystemTime;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, MutexGuard};
 use webrtc::rtcp::sender_report::SenderReport;
 use webrtc::rtcp::source_description::SdesType;
 use webrtc::rtcp::source_description::SourceDescriptionChunk;
 use webrtc::rtcp::source_description::SourceDescriptionItem;
+use webrtc::rtp::packet::Packet as RTPPacket;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::rtp_transceiver::RTCRtpTransceiver;
 
+use crate::buffer::buffer::ExtPacket;
 use crate::buffer::factory::AtomicFactory;
 
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecParameters;
@@ -54,7 +57,7 @@ pub struct DownTrack {
     stream_id: String,
     max_track: i32,
     payload_type: u8,
-    sequencer: Arc<AtomicSequencer>,
+    sequencer: Arc<Mutex<AtomicSequencer>>,
     track_type: DownTrackType,
     buffer_factory: AtomicFactory,
     pub payload: Vec<u8>,
@@ -105,7 +108,7 @@ impl DownTrack {
             stream_id: String::from(""),
             max_track: 0,
             payload_type: 0,
-            sequencer: Arc::new(AtomicSequencer::new(0)),
+            sequencer: Arc::new(Mutex::new(AtomicSequencer::new(0))),
             track_type: DownTrackType::SimpleDownTrack,
             buffer_factory: AtomicFactory::new(1000, 1000),
             payload: Vec::new(),
@@ -175,7 +178,7 @@ impl DownTrack {
         .await;
 
         if self.codec.mime_type.starts_with("video/") {
-            self.sequencer = Arc::new(AtomicSequencer::new(self.max_track));
+            self.sequencer = Arc::new(Mutex::new(AtomicSequencer::new(self.max_track)));
         }
 
         let mut handler = self.on_bind_handler.lock().await;
@@ -453,6 +456,135 @@ impl DownTrack {
         })
     }
 
+    fn update_stats(&mut self, packet_len: u32) {
+        self.octet_count.store(packet_len, Ordering::Relaxed);
+        self.packet_count.store(1, Ordering::Relaxed);
+    }
+
+    async fn write_simple_rtp(&mut self, ext_packet: &mut ExtPacket) {
+        if self.re_sync.load(Ordering::Relaxed) {
+            match self.kind() {
+                RTPCodecType::Video => {
+                    if !ext_packet.key_frame {
+                        self.receiver
+                            .send_rtcp(vec![Box::new(PictureLossIndication {
+                                sender_ssrc: self.ssrc,
+                                media_ssrc: ext_packet.packet.header.ssrc,
+                            })]);
+                        return;
+                    }
+                }
+                _ => {}
+            }
+
+            if self.last_sn != 0 {
+                self.sn_offset = ext_packet.packet.header.sequence_number - self.last_sn - 1;
+                self.ts_offset = ext_packet.packet.header.timestamp - self.last_ts - 1
+            }
+
+            self.last_ssrc
+                .store(ext_packet.packet.header.ssrc, Ordering::Relaxed);
+            self.re_sync.store(false, Ordering::Relaxed);
+        }
+
+        self.update_stats(ext_packet.packet.payload.len() as u32);
+
+        let new_sn = ext_packet.packet.header.sequence_number - self.sn_offset;
+        let new_ts = ext_packet.packet.header.timestamp - self.ts_offset;
+        let mut sequencer = self.sequencer.lock().await;
+        sequencer.push(
+            ext_packet.packet.header.sequence_number,
+            new_sn,
+            new_ts,
+            0,
+            ext_packet.head,
+        );
+
+        if ext_packet.head {
+            self.last_sn = new_sn;
+            self.last_ts = new_ts;
+        }
+        let header = &mut ext_packet.packet.header;
+        header.payload_type = self.payload_type;
+        header.timestamp = new_ts;
+        header.sequence_number = new_sn;
+        header.ssrc = self.ssrc;
+        if let Some(write_stream) = &self.write_stream {
+            write_stream.write_rtp(&ext_packet.packet);
+        }
+    }
+
+    fn write_simulcast_rtp(&mut self, ext_packet: ExtPacket, layer: i32) -> Result<()> {
+        let re_sync = self.re_sync.load(Ordering::Relaxed);
+        let csl = self.current_spatial_layer();
+
+        if csl != layer {
+            return Ok(());
+        }
+
+        let last_ssrc = self.last_ssrc.load(Ordering::Relaxed);
+
+        if last_ssrc != ext_packet.packet.header.ssrc || re_sync {
+            if re_sync && !ext_packet.key_frame {
+                self.receiver
+                    .send_rtcp(vec![Box::new(PictureLossIndication {
+                        sender_ssrc: self.ssrc,
+                        media_ssrc: ext_packet.packet.header.ssrc,
+                    })]);
+                return Ok(());
+            }
+
+            if re_sync && self.simulcast.l_ts_calc != 0 {
+                self.simulcast.l_ts_calc = ext_packet.arrival;
+            }
+
+            if self.simulcast.temporal_supported {
+                if self.mime == String::from("video/vp8") {
+                    let vp8 = ext_packet.payload;
+                    self.simulcast.p_ref_pic_id = self.simulcast.l_pic_id;
+                    self.simulcast.ref_pic_id = vp8.picture_id;
+                    self.simulcast.p_ref_tlz_idx = self.simulcast.l_tlz_idx;
+                    self.simulcast.ref_tlz_idx = vp8.tl0_picture_idx;
+                }
+            }
+            self.re_sync.store(false, Ordering::Relaxed);
+        }
+
+        if self.simulcast.l_ts_calc != 0 && last_ssrc != ext_packet.packet.header.ssrc {
+            self.last_ssrc
+                .store(ext_packet.packet.header.ssrc, Ordering::Relaxed);
+            let tdiff = (ext_packet.arrival - self.simulcast.l_ts_calc) as f64 / 1e6;
+            let mut td = (tdiff as u32 * 90) / 1000;
+            if td == 0 {
+                td = 1;
+            }
+            self.ts_offset = ext_packet.packet.header.timestamp - (self.last_ts + td);
+            self.sn_offset = ext_packet.packet.header.sequence_number - self.last_sn - 1;
+        } else if self.simulcast.l_ts_calc == 0 {
+            self.last_ts = ext_packet.packet.header.timestamp;
+            self.last_sn = ext_packet.packet.header.sequence_number;
+            if self.mime == String::from("video/vp8") {
+                let vp8 = ext_packet.payload;
+                self.simulcast.temporal_supported = vp8.temporal_supported;
+            }
+        }
+
+        let new_sn = ext_packet.packet.header.sequence_number - self.sn_offset;
+        let new_ts = ext_packet.packet.header.timestamp - self.ts_offset;
+        let payload = ext_packet.packet.payload;
+
+        let pic_id: u16 = 0;
+        let tlz0_idx: u8 = 0;
+
+        if self.simulcast.temporal_supported {
+            if self.mime == String::from("video/vp8") {
+                let (a, b, c, d) = helpers::set_vp8_temporal_layer(ext_packet.clone(), self);
+            }
+        }
+
+        Ok(())
+    }
+
     fn get_sr_status(&self) -> (u32, u32) {
         let octets = self.octet_count.load(Ordering::Relaxed);
         let packets = self.packet_count.load(Ordering::Relaxed);
@@ -465,7 +597,7 @@ impl DownTrack {
         data: Vec<u8>,
         last_ssrc: u32,
         ssrc: u32,
-        sequencer: Arc<AtomicSequencer>,
+        sequencer: Arc<Mutex<AtomicSequencer>>,
         receiver: Arc<dyn Receiver + Send + Sync>,
     ) {
         // let enabled = self.enabled.load(Ordering::Relaxed);
@@ -550,9 +682,9 @@ impl DownTrack {
                 for pair in &transport_layer_nack.nacks{
 
                                  let seq_numbers = pair.packet_list();
-                    // let sequencer = sequencer.lock.await;
+                     let sequencer2 = sequencer.lock().await;
 
-                    let mut pairs= sequencer.get_seq_no_pairs(&seq_numbers[..]).await;
+                    let mut pairs= sequencer2.get_seq_no_pairs(&seq_numbers[..]).await;
 
                     nacked_packets.append(&mut pairs);
 
