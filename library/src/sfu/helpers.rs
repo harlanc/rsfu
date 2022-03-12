@@ -11,13 +11,16 @@ use std::time::UNIX_EPOCH;
 use webrtc::rtp_transceiver::rtp_codec::{RTCRtpCodecParameters, RTPCodecType};
 use webrtc::Error as WebrtcError;
 
-use bytes::{Buf, BufMut, Bytes,BytesMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 // setVp8TemporalLayer is a helper to detect and modify accordingly the vp8 payload to reflect
 // temporal changes in the SFU.
 // VP8 temporal layers implemented according https://tools.ietf.org/html/rfc7741
 
-pub fn set_vp8_temporal_layer(ext_packet: ExtPacket, d: &mut DownTrack) -> (Bytes, u16, u8, bool) {
+pub async fn set_vp8_temporal_layer(
+    ext_packet: ExtPacket,
+    d: &mut DownTrack,
+) -> (Bytes, u16, u8, bool) {
     let pkt = ext_packet.payload;
     let layer = d.temporal_layer.load(Ordering::Relaxed);
 
@@ -35,18 +38,20 @@ pub fn set_vp8_temporal_layer(ext_packet: ExtPacket, d: &mut DownTrack) -> (Byte
         return (Bytes::default(), 0, 0, true);
     }
 
-    let mut rv_buf  = BytesMut::new();
+    let mut rv_buf = BytesMut::new();
 
     let length = ext_packet.packet.payload.len();
     rv_buf.copy_from_slice(&d.payload[..length]);
     rv_buf.copy_from_slice(&ext_packet.packet.payload[..]);
 
-    let pic_id = pkt.picture_id - d.simulcast.ref_pic_id + d.simulcast.p_ref_pic_id + 1;
-    let tlz0_idx = pkt.tl0_picture_idx - d.simulcast.ref_tlz_idx + d.simulcast.p_ref_tlz_idx + 1;
+    let simulcast = &mut d.simulcast.lock().await;
+
+    let pic_id = pkt.picture_id - simulcast.ref_pic_id + simulcast.p_ref_pic_id + 1;
+    let tlz0_idx = pkt.tl0_picture_idx - simulcast.ref_tlz_idx + simulcast.p_ref_tlz_idx + 1;
 
     if ext_packet.head {
-        d.simulcast.l_pic_id = pic_id;
-        d.simulcast.l_tlz_idx = tlz0_idx;
+        simulcast.l_pic_id = pic_id;
+        simulcast.l_tlz_idx = tlz0_idx;
     }
 
     modify_vp8_temporal_payload(
@@ -71,7 +76,7 @@ fn modify_vp8_temporal_payload(
 ) {
     // payload.get_mut(index)
     // let payload_slice = &mut payload[..];
-   // let slice = mut payload.as_slice();
+    // let slice = mut payload.as_slice();
 
     payload[pic_id_idx] = (pic_id >> 8) as u8;
     if let Some(pic_id_ref) = payload.get_mut(pic_id_idx) {
@@ -79,9 +84,8 @@ fn modify_vp8_temporal_payload(
     }
     // payload_slice[pic_id_idx] = (pic_id >> 8) as u8;
     if m_bit {
-
-        payload[pic_id_idx]  |= 0x80;
-        payload[pic_id_idx + 1]  =pic_id as u8;
+        payload[pic_id_idx] |= 0x80;
+        payload[pic_id_idx + 1] = pic_id as u8;
 
         // if let Some(ref0) = payload.get_mut(pic_id_idx) {
         //     *ref0 |= 0x80;
@@ -92,7 +96,7 @@ fn modify_vp8_temporal_payload(
         // }
     }
 
-    payload[tlz0_idx]  = tlz0_id;
+    payload[tlz0_idx] = tlz0_id;
 
     // if let Some(ref2) = payload.get_mut(tlz0_idx) {
     //     *ref2 = tlz0_id;

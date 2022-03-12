@@ -27,6 +27,8 @@ use webrtc::rtp::packet::Packet as RTPPacket;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::rtp_transceiver::RTCRtpTransceiver;
 
+use tokio::time::{sleep, Duration};
+
 use crate::buffer::buffer::ExtPacket;
 use crate::buffer::factory::AtomicFactory;
 
@@ -74,7 +76,7 @@ pub struct DownTrack {
     last_sn: u16,
     last_ts: u32,
 
-    pub simulcast: SimulcastTrackHelpers,
+    pub simulcast: Arc<Mutex<SimulcastTrackHelpers>>,
     max_spatial_layer: AtomicI32,
     max_temporal_layer: AtomicI32,
 
@@ -125,7 +127,7 @@ impl DownTrack {
             last_sn: 0,
             last_ts: 0,
 
-            simulcast: SimulcastTrackHelpers::new(),
+            simulcast: Arc::new(Mutex::new(SimulcastTrackHelpers::new())),
             max_spatial_layer: AtomicI32::new(0),
             max_temporal_layer: AtomicI32::new(0),
 
@@ -359,7 +361,7 @@ impl DownTrack {
         )))
     }
 
-    fn switch_temporal_layer(&mut self, target_layer: i32, set_as_max: bool) {
+    fn switch_temporal_layer(self: &Arc<Self>, target_layer: i32, set_as_max: bool) {
         match self.track_type {
             DownTrackType::SimulcastDownTrack => {
                 let layer = self.temporal_layer.load(Ordering::Relaxed);
@@ -461,7 +463,8 @@ impl DownTrack {
         self.packet_count.store(1, Ordering::Relaxed);
     }
 
-    async fn write_simple_rtp(&mut self, ext_packet: &mut ExtPacket) {
+    async fn write_simple_rtp(&mut self, packet: ExtPacket) {
+        let mut ext_packet = packet.clone();
         if self.re_sync.load(Ordering::Relaxed) {
             match self.kind() {
                 RTPCodecType::Video => {
@@ -498,7 +501,7 @@ impl DownTrack {
             new_ts,
             0,
             ext_packet.head,
-        );
+        ).await;
 
         if ext_packet.head {
             self.last_sn = new_sn;
@@ -514,7 +517,7 @@ impl DownTrack {
         }
     }
 
-    fn write_simulcast_rtp(&mut self, ext_packet: ExtPacket, layer: i32) -> Result<()> {
+    async fn write_simulcast_rtp(&mut self, ext_packet: &mut ExtPacket, layer: i32) -> Result<()> {
         let re_sync = self.re_sync.load(Ordering::Relaxed);
         let csl = self.current_spatial_layer();
 
@@ -523,66 +526,169 @@ impl DownTrack {
         }
 
         let last_ssrc = self.last_ssrc.load(Ordering::Relaxed);
+        let temporal_supported: bool;
 
-        if last_ssrc != ext_packet.packet.header.ssrc || re_sync {
-            if re_sync && !ext_packet.key_frame {
-                self.receiver
-                    .send_rtcp(vec![Box::new(PictureLossIndication {
-                        sender_ssrc: self.ssrc,
-                        media_ssrc: ext_packet.packet.header.ssrc,
-                    })]);
-                return Ok(());
+        {
+            let simulcast = &mut self.simulcast.lock().await;
+            temporal_supported = simulcast.temporal_supported;
+            if last_ssrc != ext_packet.packet.header.ssrc || re_sync {
+                if re_sync && !ext_packet.key_frame {
+                    self.receiver
+                        .send_rtcp(vec![Box::new(PictureLossIndication {
+                            sender_ssrc: self.ssrc,
+                            media_ssrc: ext_packet.packet.header.ssrc,
+                        })]);
+                    return Ok(());
+                }
+
+                if re_sync && simulcast.l_ts_calc != 0 {
+                    simulcast.l_ts_calc = ext_packet.arrival;
+                }
+
+                if simulcast.temporal_supported {
+                    if self.mime == String::from("video/vp8") {
+                        let vp8 = ext_packet.payload;
+                        simulcast.p_ref_pic_id = simulcast.l_pic_id;
+                        simulcast.ref_pic_id = vp8.picture_id;
+                        simulcast.p_ref_tlz_idx = simulcast.l_tlz_idx;
+                        simulcast.ref_tlz_idx = vp8.tl0_picture_idx;
+                    }
+                }
+                self.re_sync.store(false, Ordering::Relaxed);
             }
 
-            if re_sync && self.simulcast.l_ts_calc != 0 {
-                self.simulcast.l_ts_calc = ext_packet.arrival;
-            }
-
-            if self.simulcast.temporal_supported {
+            if simulcast.l_ts_calc != 0 && last_ssrc != ext_packet.packet.header.ssrc {
+                self.last_ssrc
+                    .store(ext_packet.packet.header.ssrc, Ordering::Relaxed);
+                let tdiff = (ext_packet.arrival - simulcast.l_ts_calc) as f64 / 1e6;
+                let mut td = (tdiff as u32 * 90) / 1000;
+                if td == 0 {
+                    td = 1;
+                }
+                self.ts_offset = ext_packet.packet.header.timestamp - (self.last_ts + td);
+                self.sn_offset = ext_packet.packet.header.sequence_number - self.last_sn - 1;
+            } else if simulcast.l_ts_calc == 0 {
+                self.last_ts = ext_packet.packet.header.timestamp;
+                self.last_sn = ext_packet.packet.header.sequence_number;
                 if self.mime == String::from("video/vp8") {
                     let vp8 = ext_packet.payload;
-                    self.simulcast.p_ref_pic_id = self.simulcast.l_pic_id;
-                    self.simulcast.ref_pic_id = vp8.picture_id;
-                    self.simulcast.p_ref_tlz_idx = self.simulcast.l_tlz_idx;
-                    self.simulcast.ref_tlz_idx = vp8.tl0_picture_idx;
+                    simulcast.temporal_supported = vp8.temporal_supported;
                 }
-            }
-            self.re_sync.store(false, Ordering::Relaxed);
-        }
-
-        if self.simulcast.l_ts_calc != 0 && last_ssrc != ext_packet.packet.header.ssrc {
-            self.last_ssrc
-                .store(ext_packet.packet.header.ssrc, Ordering::Relaxed);
-            let tdiff = (ext_packet.arrival - self.simulcast.l_ts_calc) as f64 / 1e6;
-            let mut td = (tdiff as u32 * 90) / 1000;
-            if td == 0 {
-                td = 1;
-            }
-            self.ts_offset = ext_packet.packet.header.timestamp - (self.last_ts + td);
-            self.sn_offset = ext_packet.packet.header.sequence_number - self.last_sn - 1;
-        } else if self.simulcast.l_ts_calc == 0 {
-            self.last_ts = ext_packet.packet.header.timestamp;
-            self.last_sn = ext_packet.packet.header.sequence_number;
-            if self.mime == String::from("video/vp8") {
-                let vp8 = ext_packet.payload;
-                self.simulcast.temporal_supported = vp8.temporal_supported;
             }
         }
 
         let new_sn = ext_packet.packet.header.sequence_number - self.sn_offset;
         let new_ts = ext_packet.packet.header.timestamp - self.ts_offset;
-        let payload = ext_packet.packet.payload;
+        let payload = &ext_packet.packet.payload;
 
         let pic_id: u16 = 0;
         let tlz0_idx: u8 = 0;
 
-        if self.simulcast.temporal_supported {
+        if temporal_supported {
             if self.mime == String::from("video/vp8") {
-                let (a, b, c, d) = helpers::set_vp8_temporal_layer(ext_packet.clone(), self);
+                let (a, b, c, d) = helpers::set_vp8_temporal_layer(ext_packet.clone(), self).await;
             }
         }
 
+        self.octet_count
+            .fetch_add(payload.len() as u32, Ordering::Relaxed);
+        self.packet_count.fetch_add(1, Ordering::Relaxed);
+
+        if ext_packet.head {
+            self.last_sn = new_sn;
+            self.last_ts = new_ts;
+        }
+        {
+            let simulcast = &mut self.simulcast.lock().await;
+            simulcast.l_ts_calc = ext_packet.arrival;
+        }
+
+        let hdr = &mut ext_packet.packet.header;
+        hdr.sequence_number = new_sn;
+        hdr.timestamp = new_ts;
+        hdr.ssrc = self.ssrc;
+        hdr.payload_type = self.payload_type;
+
+        if let Some(write_stream) = &self.write_stream {
+            write_stream.write_rtp(&ext_packet.packet);
+        }
+
         Ok(())
+    }
+
+    async fn handle_layer_change(
+        self: &Arc<Self>,
+        max_rate_packet_loss: u8,
+        expected_min_bitrate: u64,
+    ) {
+        let mut current_spatial_layer = self.current_spatial_layer.load(Ordering::Relaxed);
+        let mut target_spatial_layer = self.target_spatial_layer.load(Ordering::Relaxed);
+
+        let mut temporal_layer = self.temporal_layer.load(Ordering::Relaxed);
+        let current_temporal_layer = temporal_layer & 0x0f;
+        let target_temporal_layer = temporal_layer >> 16;
+
+        if target_spatial_layer == current_spatial_layer
+            && current_temporal_layer == target_temporal_layer
+        {
+            let now = SystemTime::now();
+            let simulcast = &mut self.simulcast.lock().await;
+            if now > simulcast.switch_delay {
+                let brs = self.receiver.get_bitrate();
+                let cbr = brs[current_spatial_layer as usize];
+                let mtl = self.receiver.get_max_temporal_layer();
+                let mctl = mtl[current_spatial_layer as usize];
+
+                if max_rate_packet_loss <= 5 {
+                    if current_temporal_layer < mctl
+                        && current_temporal_layer + 1
+                            <= self.max_temporal_layer.load(Ordering::Relaxed)
+                        && expected_min_bitrate >= 3 * cbr / 4
+                    {
+                        self.switch_temporal_layer(target_temporal_layer + 1, false);
+                        simulcast.switch_delay = SystemTime::now() + Duration::from_secs(3);
+                    }
+
+                    if current_temporal_layer >= mctl
+                        && expected_min_bitrate >= 3 * cbr / 2
+                        && current_spatial_layer + 1
+                            <= self.max_spatial_layer.load(Ordering::Relaxed)
+                        && current_spatial_layer + 1 <= 2
+                    {
+                        match self.switch_spatial_layer(current_spatial_layer + 1, false) {
+                            Ok(_) => {
+                                self.switch_temporal_layer(0, false);
+                            }
+                            Err(_) => {}
+                        }
+
+                        simulcast.switch_delay = SystemTime::now() + Duration::from_secs(5);
+                    }
+                }
+
+                if max_rate_packet_loss >= 25 {
+                    let simulcast = &mut self.simulcast.lock().await;
+                    if (expected_min_bitrate <= 5 * cbr / 8 || current_temporal_layer == 0)
+                        && current_spatial_layer > 0
+                        && brs[current_spatial_layer as usize - 1] != 0
+                    {
+                        match self.switch_spatial_layer(current_spatial_layer - 1, false) {
+                            Err(_) => {
+                                self.switch_temporal_layer(
+                                    mtl[current_spatial_layer as usize - 1],
+                                    false,
+                                );
+                            }
+                            Ok(_) => {}
+                        }
+                        simulcast.switch_delay = SystemTime::now() + Duration::from_secs(10);
+                    } else {
+                        self.switch_temporal_layer(current_spatial_layer - 1, false);
+                        simulcast.switch_delay = SystemTime::now() + Duration::from_secs(5);
+                    }
+                }
+            }
+        }
     }
 
     fn get_sr_status(&self) -> (u32, u32) {

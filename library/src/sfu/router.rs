@@ -27,8 +27,8 @@ pub trait Router {
     fn id(&self) -> String;
     async fn add_receiver(
         &mut self,
-        receiver: RTCRtpReceiver,
-        track: TrackRemote,
+        receiver: Arc<RTCRtpReceiver>,
+        track: Arc<TrackRemote>,
         track_id: String,
         stream_id: String,
     ) -> Result<Arc<Mutex<dyn Receiver + Send + Sync>>>;
@@ -53,7 +53,7 @@ pub struct RouterConfig {
     simulcast: SimulcastConfig,
 }
 
-struct RouterLocal {
+pub struct RouterLocal {
     id: String,
     twcc: Option<Responder>,
     rtcp_channel: Arc<RtcpDataSender>,
@@ -66,7 +66,7 @@ impl RouterLocal {
     pub fn new(
         id: String,
         session: Arc<Box<dyn Session + Send + Sync>>,
-        config: WebRTCTransportConfig,
+        config: RouterConfig,
     ) -> Self {
         let (s, r) = mpsc::unbounded_channel();
 
@@ -76,7 +76,7 @@ impl RouterLocal {
             twcc: None,
             rtcp_channel: Arc::new(s),
             stop_channel: sender,
-            config: config.Router,
+            config,
             session,
             receivers: HashMap::new(),
         }
@@ -95,8 +95,8 @@ impl Router for RouterLocal {
 
     async fn add_receiver(
         &mut self,
-        receiver: RTCRtpReceiver,
-        track: TrackRemote,
+        receiver: Arc<RTCRtpReceiver>,
+        track: Arc<TrackRemote>,
         track_id: String,
         stream_id: String,
     ) -> Result<Arc<Mutex<dyn Receiver + Send + Sync>>> {
@@ -104,7 +104,7 @@ impl Router for RouterLocal {
 
         match track.kind() {
             RTPCodecType::Audio => {
-                if let Some(mut observer) =  self.session.audio_obserber() {
+                if let Some(mut observer) = self.session.audio_obserber() {
                     observer.add_stream(stream_id).await;
                 }
             }

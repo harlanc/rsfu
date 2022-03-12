@@ -48,7 +48,7 @@ pub struct WebRTCReceiver {
     bandwidth: u64,
     last_pli: i64,
     stream: String,
-    receiver: RTCRtpReceiver,
+    receiver: Arc<RTCRtpReceiver>,
     codec: RTCRtpCodecParameters,
     rtcp_channel: RtcpDataReceiver,
     buffers: Vec<Buffer>,
@@ -63,7 +63,7 @@ pub struct WebRTCReceiver {
 }
 
 impl WebRTCReceiver {
-    pub async fn new(receiver: RTCRtpReceiver, track: TrackRemote, pid: String) -> Self {
+    pub async fn new(receiver: Arc<RTCRtpReceiver>, track: Arc<TrackRemote>, pid: String) -> Self {
         let (s, r) = mpsc::unbounded_channel();
         Self {
             peer_id: pid,

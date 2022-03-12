@@ -10,7 +10,7 @@ pub struct SimulcastConfig {
 }
 
 pub struct SimulcastTrackHelpers {
-    switch_delay: SystemTime,
+    pub switch_delay: SystemTime,
     pub temporal_supported: bool,
     temporal_enabled: bool,
     pub l_ts_calc: i64,
