@@ -17,6 +17,8 @@ use crate::stats::stream::Stream;
 use std::sync::Weak;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
+use std::any::Any;
+
 pub type RtcpDataReceiver = mpsc::UnboundedReceiver<Vec<Box<dyn RtcpPacket + Send + Sync>>>;
 pub trait Receiver: Send + Sync {
     fn track_id(&self) -> String;
@@ -36,6 +38,7 @@ pub trait Receiver: Send + Sync {
     fn send_rtcp(&self, p: Vec<Box<dyn RtcpPacket + Send + Sync>>);
     fn set_rtcp_channel(&self);
     fn get_sender_report_time(&self, layer: u8) -> (u32, u64);
+    fn as_any(&self) -> &(dyn Any + Send + Sync);
 }
 
 pub struct WebRTCReceiver {
@@ -181,5 +184,8 @@ impl Receiver for WebRTCReceiver {
     fn set_rtcp_channel(&self) {}
     fn get_sender_report_time(&self, layer: u8) -> (u32, u64) {
         (0, 0)
+    }
+    fn as_any(&self) -> &(dyn Any + Send + Sync) {
+        self
     }
 }

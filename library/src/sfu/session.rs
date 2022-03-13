@@ -12,6 +12,8 @@ use std::sync::Arc;
 use webrtc::data_channel::data_channel_message::DataChannelMessage;
 use webrtc::data_channel::RTCDataChannel;
 
+use tokio::sync::{Mutex, MutexGuard};
+
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
@@ -21,8 +23,8 @@ pub trait Session {
     fn id(&self) -> String;
     fn publish(
         &mut self,
-        router: Arc<dyn Router + Send + Sync>,
-        r: Arc<dyn Receiver + Send + Sync>,
+        router: Arc<Mutex<dyn Router + Send + Sync>>,
+        r: Arc<Mutex<dyn Receiver + Send + Sync>>,
     );
     fn subscribe(&mut self, peer: Arc<dyn Peer + Send + Sync>);
     fn add_peer(&mut self, peer: Arc<dyn Peer + Send + Sync>);
@@ -136,8 +138,8 @@ impl SessionLocal {
 
     fn publish(
         &mut self,
-        router: Arc<dyn Router + Send + Sync>,
-        r: Arc<dyn Receiver + Send + Sync>,
+        router: Arc<Mutex<dyn Router + Send + Sync>>,
+        r: Arc<Mutex<dyn Receiver + Send + Sync>>,
     ) {
     }
     fn subscribe(&mut self, peer: Arc<dyn Peer + Send + Sync>) {}

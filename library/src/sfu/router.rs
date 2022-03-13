@@ -31,7 +31,7 @@ pub trait Router {
         track: Arc<TrackRemote>,
         track_id: String,
         stream_id: String,
-    ) -> Result<Arc<Mutex<dyn Receiver + Send + Sync>>>;
+    ) -> (Arc<Mutex<dyn Receiver + Send + Sync>>, bool);
     fn add_down_tracks(&mut self) -> Result<()>;
     fn set_rtcp_writer(&mut self, writer: fn(Vec<Box<dyn RtcpPacket + Send + Sync>>) -> Result<()>);
     fn add_down_track(
@@ -46,7 +46,7 @@ pub trait Router {
 pub struct RouterConfig {
     pub(super) with_stats: bool,
     max_bandwidth: u64,
-    max_packet_track: i32,
+    pub max_packet_track: i32,
     audio_level_interval: i32,
     audio_level_threshold: u8,
     audio_level_filter: i32,
@@ -59,13 +59,13 @@ pub struct RouterLocal {
     rtcp_channel: Arc<RtcpDataSender>,
     stop_channel: mpsc::Sender<()>,
     config: RouterConfig,
-    session: Arc<Box<dyn Session + Send + Sync>>,
+    session: Arc<Mutex<dyn Session + Send + Sync>>,
     receivers: HashMap<String, Arc<Mutex<dyn Receiver + Send + Sync>>>,
 }
 impl RouterLocal {
     pub fn new(
         id: String,
-        session: Arc<Box<dyn Session + Send + Sync>>,
+        session: Arc<Mutex<dyn Session + Send + Sync>>,
         config: RouterConfig,
     ) -> Self {
         let (s, r) = mpsc::unbounded_channel();
@@ -99,12 +99,12 @@ impl Router for RouterLocal {
         track: Arc<TrackRemote>,
         track_id: String,
         stream_id: String,
-    ) -> Result<Arc<Mutex<dyn Receiver + Send + Sync>>> {
-        let publish = false;
+    ) -> (Arc<Mutex<dyn Receiver + Send + Sync>>, bool) {
+        let mut publish = false;
 
         match track.kind() {
             RTPCodecType::Audio => {
-                if let Some(mut observer) = self.session.audio_obserber() {
+                if let Some(mut observer) = self.session.lock().await.audio_obserber() {
                     observer.add_stream(stream_id).await;
                 }
             }
@@ -137,7 +137,7 @@ impl Router for RouterLocal {
             result_receiver = Arc::new(Mutex::new(rv));
         }
 
-        Ok(result_receiver)
+        (result_receiver, publish)
     }
 
     fn add_down_tracks(&mut self) -> Result<()> {

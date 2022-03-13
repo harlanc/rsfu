@@ -95,7 +95,7 @@ pub struct DownTrack {
 }
 
 impl DownTrack {
-    fn new(
+    pub(super) fn new(
         c: RTCRtpCodecCapability,
         r: Arc<dyn Receiver + Send + Sync>,
         peer_id: String,
@@ -495,13 +495,15 @@ impl DownTrack {
         let new_sn = ext_packet.packet.header.sequence_number - self.sn_offset;
         let new_ts = ext_packet.packet.header.timestamp - self.ts_offset;
         let mut sequencer = self.sequencer.lock().await;
-        sequencer.push(
-            ext_packet.packet.header.sequence_number,
-            new_sn,
-            new_ts,
-            0,
-            ext_packet.head,
-        ).await;
+        sequencer
+            .push(
+                ext_packet.packet.header.sequence_number,
+                new_sn,
+                new_ts,
+                0,
+                ext_packet.head,
+            )
+            .await;
 
         if ext_packet.head {
             self.last_sn = new_sn;
