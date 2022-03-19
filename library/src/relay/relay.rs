@@ -52,6 +52,7 @@ use crate::buffer::errors;
 
 use super::errors::*;
 use anyhow::Result;
+//use super::errors::Result;
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
@@ -628,9 +629,9 @@ impl Peer {
         Ok(())
     }
 
-    async fn add_track(
+    pub async fn add_track(
         &mut self,
-        receiver: RTCRtpReceiver,
+        receiver: Arc<RTCRtpReceiver>,
         remote_track: TrackRemote,
         local_track: Arc<dyn TrackLocal + Send + Sync>,
     ) -> Result<()> {
@@ -684,22 +685,22 @@ impl Peer {
         )
         .await?;
 
-        let parameters = receiver.get_parameters().await;
+        // let parameters = receiver.get_parameters().await.clone();
 
-        let send_parameters = RTCRtpSendParameters {
-            rtp_parameters: parameters,
-            encodings: vec![RTCRtpCodingParameters {
-                ssrc: encodings.ssrc,
-                payload_type: encodings.payload_type,
-                ..Default::default()
-            }],
-        };
+        // let send_parameters = RTCRtpSendParameters {
+        //     rtp_parameters: parameters.clone(),
+        //     encodings: vec![RTCRtpCodingParameters {
+        //         ssrc: encodings.ssrc,
+        //         payload_type: encodings.payload_type,
+        //         ..Default::default()
+        //     }],
+        // };
 
-        sdr.send(&send_parameters).await?;
+        // sdr.send(&send_parameters).await?;
 
-        self.local_tracks.push(local_track);
+        // self.local_tracks.push(local_track);
 
-        self.rtp_senders.push(Arc::new(sdr));
+        // self.rtp_senders.push(Arc::new(sdr));
 
         Ok(())
     }

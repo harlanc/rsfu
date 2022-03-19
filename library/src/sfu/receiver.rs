@@ -51,7 +51,7 @@ pub struct WebRTCReceiver {
     bandwidth: u64,
     last_pli: i64,
     stream: String,
-    receiver: Arc<RTCRtpReceiver>,
+    pub receiver: Arc<RTCRtpReceiver>,
     codec: RTCRtpCodecParameters,
     rtcp_channel: RtcpDataReceiver,
     buffers: Vec<Buffer>,

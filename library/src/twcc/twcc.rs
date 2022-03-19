@@ -300,9 +300,7 @@ impl Responder {
         }
 
         let mut p_len = self.len as usize + self.delta_len + 4;
-
         let pad = p_len != 0;
-
         let mut pad_size: u8 = 0;
 
         while p_len % 4 != 0 {

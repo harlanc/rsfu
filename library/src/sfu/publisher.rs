@@ -71,6 +71,8 @@ pub struct RelayPeer {
     relay_fanout_data_channels: bool,
 }
 
+struct TestA {}
+
 pub(super) struct PublisherTrack {
     track: Arc<TrackRemote>,
     receiver: Arc<Mutex<dyn Receiver + Send + Sync>>,
@@ -174,9 +176,11 @@ impl Publisher {
                                         client_relay: true,
                                     });
 
-                                    // for val in relay_peers_in.lock().await {
+                                    let relay_peers = relay_peers_in.lock().await;
 
-                                    // }
+                                    for val in &*relay_peers {
+                                        //val.
+                                    }
                                 } else {
                                     tracks_in.lock().await.push(PublisherTrack {
                                         track: track_val_clone,
@@ -195,8 +199,8 @@ impl Publisher {
     async fn crate_relay_track(
         &mut self,
         track: TrackRemote,
-        receiver: Arc<dyn Receiver + Send + Sync>,
-        rp: Peer,
+        receiver: Arc<Mutex<dyn Receiver + Send + Sync>>,
+        rp: &mut Peer,
     ) -> Result<()> {
         let codec = track.codec().await;
 
@@ -217,16 +221,20 @@ impl Publisher {
             ],
         };
 
-        let downtrack = DownTrack::new(
+        let downtrack = Arc::new(DownTrack::new(
             c,
             receiver.clone(),
             self.id.clone(),
             self.cfg.Router.max_packet_track,
-        );
+        ));
 
-        if let Some(webrtc_receiver) = (*receiver).as_any().downcast_ref::<WebRTCReceiver>() {
-            rp.add_track(webrtc_receiver, track, local_track).await;
+        let receiver_mg = receiver.lock().await;
+        if let Some(webrtc_receiver) = (*receiver_mg).as_any().downcast_ref::<WebRTCReceiver>() {
+            rp.add_track(webrtc_receiver.receiver.clone(), track, downtrack)
+                .await?;
         }
+
+       // self.cfg
 
         Ok(())
     }

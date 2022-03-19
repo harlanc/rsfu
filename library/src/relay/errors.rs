@@ -18,8 +18,8 @@ pub enum Error {
     #[error("relay request empty response")]
     ErrRelayRequestEmptyRespose,
 }
-impl Error {
-    pub fn equal(&self, err: &anyhow::Error) -> bool {
-        err.downcast_ref::<Self>().map_or(false, |e| e == self)
-    }
-}
+// impl Error {
+//     pub fn equal(&self, err: &anyhow::Error) -> bool {
+//         err.downcast_ref::<Self>().map_or(false, |e| e == self)
+//     }
+// }
