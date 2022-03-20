@@ -13,7 +13,7 @@ pub struct Factory {
     pub rtp_buffers: HashMap<u32, Arc<Mutex<Buffer>>>,
     pub rtcp_readers: HashMap<u32, Arc<Mutex<RTCPReader>>>,
 }
-
+#[derive(Default)]
 pub struct AtomicFactory {
     factory: Arc<Mutex<Factory>>,
 }
@@ -80,7 +80,7 @@ impl AtomicFactory {
         if let Some(reader) = factory.rtp_buffers.get_mut(&ssrc) {
             return reader.clone();
         }
-        
+
         let reader = Arc::new(Mutex::new(Buffer::new(ssrc)));
         factory.rtp_buffers.insert(ssrc, reader.clone());
 

@@ -634,7 +634,7 @@ impl Peer {
         receiver: Arc<RTCRtpReceiver>,
         remote_track: TrackRemote,
         local_track: Arc<dyn TrackLocal + Send + Sync>,
-    ) -> Result<()> {
+    ) -> Result<Arc<RTCRtpSender>> {
         let codec = remote_track.codec().await;
 
         let sdr = self
@@ -685,24 +685,26 @@ impl Peer {
         )
         .await?;
 
-        // let parameters = receiver.get_parameters().await.clone();
+        let parameters = receiver.get_parameters().await.clone();
 
-        // let send_parameters = RTCRtpSendParameters {
-        //     rtp_parameters: parameters.clone(),
-        //     encodings: vec![RTCRtpCodingParameters {
-        //         ssrc: encodings.ssrc,
-        //         payload_type: encodings.payload_type,
-        //         ..Default::default()
-        //     }],
-        // };
+        let send_parameters = RTCRtpSendParameters {
+            rtp_parameters: parameters.clone(),
+            encodings: vec![RTCRtpCodingParameters {
+                ssrc: encodings.ssrc,
+                payload_type: encodings.payload_type,
+                ..Default::default()
+            }],
+        };
 
-        // sdr.send(&send_parameters).await?;
+        sdr.send(&send_parameters).await?;
 
-        // self.local_tracks.push(local_track);
+        self.local_tracks.push(local_track);
 
-        // self.rtp_senders.push(Arc::new(sdr));
+        let sdr_arc = Arc::new(sdr);
 
-        Ok(())
+        self.rtp_senders.push(sdr_arc.clone());
+
+        Ok(sdr_arc)
     }
 
     async fn emit(&mut self, event: String, payload: Vec<u8>) -> Result<()> {

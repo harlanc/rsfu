@@ -17,6 +17,7 @@ use webrtc::ice_transport::ice_candidate_type::RTCIceCandidateType;
 use webrtc::ice_transport::ice_credential_type::RTCIceCredentialType;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 
+use crate::buffer::factory::AtomicFactory;
 use std::sync::Arc;
 use turn::auth::AuthHandler;
 use webrtc::peer_connection::configuration::*;
@@ -40,6 +41,7 @@ pub struct WebRTCTransportConfig {
     pub configuration: RTCConfiguration,
     pub setting: SettingEngine,
     pub Router: RouterConfig,
+    pub factory: AtomicFactory,
 }
 #[derive(Clone)]
 struct WebRTCTimeoutsConfig {
@@ -170,6 +172,7 @@ impl WebRTCTransportConfig {
             },
             setting: se,
             Router: c.router.clone(),
+            factory: AtomicFactory::new(1000, 1000),
         };
 
         if c.webrtc.candidates.nat1_to_1ips.len() > 0 {

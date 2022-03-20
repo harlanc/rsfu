@@ -86,7 +86,7 @@ pub struct DownTrack {
     receiver: Arc<Mutex<dyn Receiver + Send + Sync>>,
     transceiver: Option<RTCRtpTransceiver>,
     write_stream: Mutex<Option<Arc<dyn TrackLocalWriter + Send + Sync>>>, //TrackLocalWriter,
-    on_close_handler: Arc<Mutex<Option<OnCloseFn>>>,
+    pub on_close_handler: Arc<Mutex<Option<OnCloseFn>>>,
     on_bind_handler: Arc<Mutex<Option<OnBindFn>>>,
 
     close_once: Once,
@@ -322,7 +322,7 @@ impl DownTrack {
         }
     }
 
-    async fn on_close_hander(&mut self, f: OnCloseFn) {
+    pub async fn on_close_hander(&mut self, f: OnCloseFn) {
         let mut handler = self.on_close_handler.lock().await;
         *handler = Some(f);
     }

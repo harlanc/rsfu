@@ -2,6 +2,7 @@ use super::router::Router;
 use super::router::RouterLocal;
 use super::session::Session;
 use super::sfu::WebRTCTransportConfig;
+use rtcp::packet::Packet as RtcpPacket;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU32, Ordering};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::peer_connection::RTCPeerConnection;
@@ -28,6 +29,7 @@ use webrtc::data_channel::RTCDataChannel;
 use webrtc::track::track_remote::TrackRemote;
 
 use super::down_track::DownTrack;
+use crate::buffer::factory::AtomicFactory;
 
 pub type OnIceConnectionStateChange =
     Box<dyn (FnMut() -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>) + Send + Sync>;
@@ -109,6 +111,7 @@ impl Publisher {
             configuration: rtc_config_clone,
             setting: cfg.setting.clone(),
             Router: cfg.Router.clone(),
+            factory: AtomicFactory::new(1000, 1000),
         };
 
         let pc = api.new_peer_connection(cfg.configuration).await?;
@@ -221,20 +224,72 @@ impl Publisher {
             ],
         };
 
-        let downtrack = Arc::new(DownTrack::new(
+        let mut downtrack = DownTrack::new(
             c,
             receiver.clone(),
             self.id.clone(),
             self.cfg.Router.max_packet_track,
-        ));
+        );
+
+        let downtrack_arc = Arc::new(downtrack);
 
         let receiver_mg = receiver.lock().await;
+        let media_ssrc = track.ssrc();
         if let Some(webrtc_receiver) = (*receiver_mg).as_any().downcast_ref::<WebRTCReceiver>() {
-            rp.add_track(webrtc_receiver.receiver.clone(), track, downtrack)
+            let sdr = rp
+                .add_track(webrtc_receiver.receiver.clone(), track, downtrack_arc.clone())
                 .await?;
-        }
 
-       // self.cfg
+            let ssrc = sdr.get_parameters().await.encodings.get(0).unwrap().ssrc;
+
+            let rtcp_buffer = self.cfg.factory.get_or_new_rtcp_buffer(ssrc).await;
+            let pc_out = self.pc.clone();
+            rtcp_buffer
+                .lock()
+                .await
+                .on_packet(Box::new(move |bytes: Vec<u8>| {
+                    let pc_in = pc_out.clone();
+                    Box::pin(async move {
+                        let mut buf = &bytes[..];
+                        let mut pkts_result = rtcp::packet::unmarshal(&mut buf);
+                        let mut pkts;
+
+                        match pkts_result {
+                            Ok(pkts_rv) => {
+                                pkts = pkts_rv;
+                            }
+                            Err(_) => {
+                                return;
+                            }
+                        }
+                        let mut rpkts: Vec<Box<dyn RtcpPacket + Send + Sync>> = Vec::new();
+                        for pkt in &mut pkts {
+                            if let Some(pic_loss_indication) = pkt
+                                    .as_any()
+                                    .downcast_ref::<rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication>()
+                                {
+                                    let mut pli = pic_loss_indication.clone();
+                                    pli.media_ssrc = media_ssrc;
+                                    rpkts.push(Box::new(pli));
+
+                                }
+                        }
+                        if rpkts.len() > 0 {
+                            match pc_in.write_rtcp(&pkts[..]).await {
+                                Ok(_) => {}
+                                Err(_) => {}
+                            }
+                        }
+                    })
+                }))
+                .await;
+
+            let sdr_out = sdr.clone();
+            downtrack_arc.on_close_hander(Box::new(move || {
+                let sdr_in = sdr_out.clone();
+                Box::pin(async move { if let Err(_) = sdr_in.stop().await {} })
+            }));
+        }
 
         Ok(())
     }
