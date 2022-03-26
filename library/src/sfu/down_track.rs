@@ -55,7 +55,7 @@ enum DownTrackType {
 pub struct DownTrack {
     id: String,
     peer_id: String,
-    bound: AtomicBool,
+    pub bound: AtomicBool,
     mime: Mutex<String>,
     ssrc: Mutex<u32>,
     stream_id: String,
@@ -359,7 +359,7 @@ impl DownTrack {
         ])
     }
 
-    async fn create_sender_report(&self) -> Option<SenderReport> {
+    pub async fn create_sender_report(&self) -> Option<SenderReport> {
         if !self.bound.load(Ordering::Relaxed) {
             return None;
         }

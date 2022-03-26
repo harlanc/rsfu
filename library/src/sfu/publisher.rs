@@ -2,9 +2,11 @@ use super::router::Router;
 use super::router::RouterLocal;
 use super::session::Session;
 use super::sfu::WebRTCTransportConfig;
+use crate::buffer::rtcpreader::RTCPReader;
 use rtcp::packet::Packet as RtcpPacket;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU32, Ordering};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
+use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
 use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
@@ -23,6 +25,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Once;
 use tokio::sync::{Mutex, MutexGuard};
+use tokio::time::{sleep, Duration};
 use webrtc::api::APIBuilder;
 use webrtc::api::API;
 use webrtc::data_channel::RTCDataChannel;
@@ -111,7 +114,7 @@ impl Publisher {
             configuration: rtc_config_clone,
             setting: cfg.setting.clone(),
             Router: cfg.Router.clone(),
-            factory: AtomicFactory::new(1000, 1000),
+            factory: Arc::new(Mutex::new(AtomicFactory::new(1000, 1000))),
         };
 
         let pc = api.new_peer_connection(cfg.configuration).await?;
@@ -140,9 +143,19 @@ impl Publisher {
 
     async fn on_track(&mut self) {
         let router_out = Arc::clone(&mut self.router);
+        let router_out_2 = Arc::clone(&mut self.router);
         let session_out = Arc::clone(&mut self.session);
+        let session_out_2 = Arc::clone(&mut self.session);
         let tracks_out = Arc::clone(&mut self.tracks);
         let relay_peer_out = Arc::clone(&mut self.relay_peers);
+        let relay_peer_out_2 = Arc::clone(&mut self.relay_peers);
+        let factory_out = Arc::clone(&mut self.cfg.factory);
+        let peer_id_out = self.id.clone();
+        let peer_id_out_2 = self.id.clone();
+        let max_packet_track = self.cfg.Router.max_packet_track;
+        let peer_connection_out = self.pc.clone();
+        let peer_connection_out_2 = self.pc.clone();
+
         self.pc
             .on_track(Box::new(
                 move |track: Option<Arc<TrackRemote>>, receiver: Option<Arc<RTCRtpReceiver>>| {
@@ -151,6 +164,10 @@ impl Publisher {
                     let session_in = Arc::clone(&session_out);
                     let tracks_in = Arc::clone(&tracks_out);
                     let relay_peers_in = Arc::clone(&relay_peer_out);
+                    let factory_in = Arc::clone(&factory_out);
+                    let peer_id = peer_id_out.clone();
+                    let peer_connection = peer_connection_out.clone();
+
                     Box::pin(async move {
                         if let Some(receiver_val) = receiver {
                             if let Some(track_val) = track {
@@ -162,7 +179,7 @@ impl Publisher {
                                 let (receiver, publish) = router
                                     .add_receiver(
                                         receiver_val,
-                                        track_val,
+                                        track_val.clone(),
                                         track_id,
                                         track_stream_id,
                                     )
@@ -171,7 +188,10 @@ impl Publisher {
                                 let receiver_clone = receiver.clone();
 
                                 if publish {
-                                    session_in.lock().await.publish(router_in2, receiver);
+                                    session_in
+                                        .lock()
+                                        .await
+                                        .publish(router_in2, receiver.clone());
 
                                     tracks_in.lock().await.push(PublisherTrack {
                                         track: track_val_clone,
@@ -179,10 +199,18 @@ impl Publisher {
                                         client_relay: true,
                                     });
 
-                                    let relay_peers = relay_peers_in.lock().await;
+                                    let mut relay_peers = relay_peers_in.lock().await;
 
-                                    for val in &*relay_peers {
-                                        //val.
+                                    for val in &mut *relay_peers {
+                                        Publisher::crate_relay_track(
+                                            track_val.clone(),
+                                            receiver.clone(),
+                                            &mut val.peer,
+                                            peer_id.clone(),
+                                            max_packet_track,
+                                            factory_in.clone(),
+                                            peer_connection.clone(),
+                                        );
                                     }
                                 } else {
                                     tracks_in.lock().await.push(PublisherTrack {
@@ -197,13 +225,54 @@ impl Publisher {
                 },
             ))
             .await;
+
+        self.pc
+            .on_data_channel(Box::new(move |d: Arc<RTCDataChannel>| {
+                let session_in = Arc::clone(&session_out_2);
+                let peer_id = peer_id_out_2.clone();
+
+                // Ignore our default channel, exists to force ICE candidates. See signalPair for more info
+                if d.label() == super::subscriber::API_CHANNEL_LABEL {
+                    return Box::pin(async {});
+                }
+
+                Box::pin(async move {
+                    session_in.lock().await.add_data_channel(peer_id, d);
+                })
+            }))
+            .await;
+
+        self.pc
+            .on_ice_connection_state_change(Box::new(move |s: RTCIceConnectionState| {
+                let router_in = Arc::clone(&router_out_2);
+                let relay_peer_in = Arc::clone(&relay_peer_out_2);
+
+                let peer_connection_in = peer_connection_out_2.clone();
+                Box::pin(async move {
+                    match s {
+                        RTCIceConnectionState::Failed | RTCIceConnectionState::Closed => {
+                            Publisher::close(relay_peer_in, router_in, peer_connection_in).await;
+                        }
+
+                        _ => {}
+                    }
+                })
+            }))
+            .await;
+
+        self.router.lock().await.set_rtcp_writer(self.pc.write_rtcp);
     }
 
     async fn crate_relay_track(
-        &mut self,
-        track: TrackRemote,
+        // &mut self,
+        track: Arc<TrackRemote>,
         receiver: Arc<Mutex<dyn Receiver + Send + Sync>>,
         rp: &mut Peer,
+        peer_id: String,
+        max_packet_track: i32,
+        //rtcp_reader: Arc<Mutex<RTCPReader>>,
+        factory: Arc<Mutex<AtomicFactory>>,
+        rtc_peer_connection: Arc<RTCPeerConnection>,
     ) -> Result<()> {
         let codec = track.codec().await;
 
@@ -224,31 +293,31 @@ impl Publisher {
             ],
         };
 
-        let mut downtrack = DownTrack::new(
-            c,
-            receiver.clone(),
-            self.id.clone(),
-            self.cfg.Router.max_packet_track,
-        );
+        let mut downtrack = DownTrack::new(c, receiver.clone(), peer_id, max_packet_track);
 
         let downtrack_arc = Arc::new(downtrack);
 
-        let receiver_mg = receiver.lock().await;
+        let mut receiver_mg = receiver.lock().await;
         let media_ssrc = track.ssrc();
-        if let Some(webrtc_receiver) = (*receiver_mg).as_any().downcast_ref::<WebRTCReceiver>() {
+        if let Some(webrtc_receiver) = (receiver_mg).as_any().downcast_ref::<WebRTCReceiver>() {
+            // let down_track = downtrack_arc.lock().await;
             let sdr = rp
-                .add_track(webrtc_receiver.receiver.clone(), track, downtrack_arc.clone())
+                .add_track(
+                    webrtc_receiver.receiver.clone(),
+                    track,
+                    downtrack_arc.clone(),
+                )
                 .await?;
 
             let ssrc = sdr.get_parameters().await.encodings.get(0).unwrap().ssrc;
 
-            let rtcp_buffer = self.cfg.factory.get_or_new_rtcp_buffer(ssrc).await;
-            let pc_out = self.pc.clone();
-            rtcp_buffer
+            let rtcp_reader = factory.lock().await.get_or_new_rtcp_buffer(ssrc).await;
+            // let pc_out = self.pc.clone();
+            rtcp_reader
                 .lock()
                 .await
                 .on_packet(Box::new(move |bytes: Vec<u8>| {
-                    let pc_in = pc_out.clone();
+                    let pc_in = rtc_peer_connection.clone();
                     Box::pin(async move {
                         let mut buf = &bytes[..];
                         let mut pkts_result = rtcp::packet::unmarshal(&mut buf);
@@ -285,12 +354,75 @@ impl Publisher {
                 .await;
 
             let sdr_out = sdr.clone();
+
             downtrack_arc.on_close_hander(Box::new(move || {
                 let sdr_in = sdr_out.clone();
                 Box::pin(async move { if let Err(_) = sdr_in.stop().await {} })
             }));
+
+            receiver_mg.add_down_track(downtrack_arc, true);
         }
 
         Ok(())
+    }
+
+    async fn close(
+        relay_peers: Arc<Mutex<Vec<RelayPeer>>>,
+        router: Arc<Mutex<dyn Router + Send + Sync>>,
+        pc: Arc<RTCPeerConnection>,
+    ) {
+        // self.close_once.call_once(|| {
+        //     Box::pin(async move {
+        let mut peers = relay_peers.lock().await;
+
+        for val in &mut *peers {
+            val.peer.close().await;
+        }
+        router.lock().await.stop().await;
+        pc.close().await;
+        //     });
+        // });
+    }
+
+    async fn relay_reports(&self, rp: &mut Peer) {
+        loop {
+            sleep(Duration::from_secs(5)).await;
+
+            let local_tracks = rp.get_local_tracks();
+
+            let mut rtcp_packets: Vec<Box<(dyn rtcp::packet::Packet + Send + Sync + 'static)>> =
+                vec![];
+            for local_track in local_tracks {
+                if let Some(down_track) = local_track
+                    .as_any()
+                    .downcast_ref::<super::down_track::DownTrack>()
+                {
+                    if !down_track.bound.load(Ordering::Relaxed) {
+                        continue;
+                    }
+
+                    if let Some(sr) = down_track.create_sender_report().await {
+                        rtcp_packets.push(Box::new(sr));
+                    }
+                }
+            }
+
+            if rtcp_packets.len() == 0 {
+                continue;
+            }
+
+            match rp.write_rtcp(&rtcp_packets[..]).await {
+                Ok(_) => {}
+                Err(err) => {}
+            }
+            // if self.closed {
+            //     return Err(Error::ErrIOEof.into());
+            // }
+
+            // if self.ext_packets.len() > 0 {
+            //     let ext_pkt = self.ext_packets.pop_front().unwrap();
+            //     return Ok(ext_pkt);
+            // }
+        }
     }
 }

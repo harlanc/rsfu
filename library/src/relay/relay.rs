@@ -447,7 +447,7 @@ impl Peer {
         Ok(json_str)
     }
 
-    async fn write_rtcp(&self, pkt: &[Box<dyn RtcpPacket + Send + Sync>]) -> Result<()> {
+    pub async fn write_rtcp(&self, pkt: &[Box<dyn RtcpPacket + Send + Sync>]) -> Result<()> {
         self.dtls_transport.write_rtcp(pkt).await?;
         Ok(())
     }
@@ -517,7 +517,7 @@ impl Peer {
         Ok(())
     }
 
-    async fn close(&mut self) -> Vec<Result<()>> {
+    pub async fn close(&mut self) -> Vec<Result<()>> {
         let mut results: Vec<Result<()>> = Vec::new();
         for sender in &self.rtp_senders {
             match sender.stop().await {
@@ -632,7 +632,7 @@ impl Peer {
     pub async fn add_track(
         &mut self,
         receiver: Arc<RTCRtpReceiver>,
-        remote_track: TrackRemote,
+        remote_track: Arc<TrackRemote>,
         local_track: Arc<dyn TrackLocal + Send + Sync>,
     ) -> Result<Arc<RTCRtpSender>> {
         let codec = remote_track.codec().await;

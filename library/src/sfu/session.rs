@@ -33,7 +33,7 @@ pub trait Session {
     async fn add_relay_peer(&mut self, peer_id: String, signal_data: String) -> Result<String>;
     fn audio_obserber(&self) -> Option<&mut AudioObserver>;
 
-    fn add_data_channel(&mut self, owner: String, dc: RTCDataChannel);
+    fn add_data_channel(&mut self, owner: String, dc: Arc<RTCDataChannel>);
     fn get_data_channel_middlewares(&self) -> Vec<RTCDataChannel>;
     fn get_fanout_data_channel_labels(&self) -> Vec<String>;
     fn get_data_channels(&self, peer_id: String, label: String) -> Vec<Arc<RTCDataChannel>>;
@@ -123,7 +123,7 @@ impl SessionLocal {
         Ok(String::from(""))
     }
 
-    fn add_data_channel(&mut self, owner: String, dc: RTCDataChannel) {}
+    pub fn add_data_channel(&mut self, owner: String, dc: Arc<RTCDataChannel>) {}
 
     fn get_data_channels(&self, peer_id: String, label: String) -> Vec<Option<RTCDataChannel>> {
         Vec::new()

@@ -12,6 +12,7 @@ use bytes::BytesMut;
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::net::UdpSocket;
+use tokio::sync::{Mutex, MutexGuard};
 use turn::server::Server as TurnServer;
 use webrtc::ice_transport::ice_candidate_type::RTCIceCandidateType;
 use webrtc::ice_transport::ice_credential_type::RTCIceCredentialType;
@@ -41,7 +42,7 @@ pub struct WebRTCTransportConfig {
     pub configuration: RTCConfiguration,
     pub setting: SettingEngine,
     pub Router: RouterConfig,
-    pub factory: AtomicFactory,
+    pub factory: Arc<Mutex<AtomicFactory>>,
 }
 #[derive(Clone)]
 struct WebRTCTimeoutsConfig {
@@ -172,7 +173,7 @@ impl WebRTCTransportConfig {
             },
             setting: se,
             Router: c.router.clone(),
-            factory: AtomicFactory::new(1000, 1000),
+            factory: Arc::new(Mutex::new(AtomicFactory::new(1000, 1000))),
         };
 
         if c.webrtc.candidates.nat1_to_1ips.len() > 0 {

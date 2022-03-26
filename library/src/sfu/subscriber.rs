@@ -19,6 +19,8 @@ use super::sfu::WebRTCTransportConfig;
 
 use anyhow::Result;
 
+pub const API_CHANNEL_LABEL: &'static str = "rsfu";
+
 pub type NegotiateFn =
     Box<dyn (FnMut() -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>) + Send + Sync>;
 
