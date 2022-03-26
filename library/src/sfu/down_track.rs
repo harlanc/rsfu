@@ -322,7 +322,7 @@ impl DownTrack {
         }
     }
 
-    pub async fn on_close_hander(&mut self, f: OnCloseFn) {
+    pub async fn on_close_handler(&mut self, f: OnCloseFn) {
         let mut handler = self.on_close_handler.lock().await;
         *handler = Some(f);
     }

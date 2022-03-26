@@ -128,7 +128,7 @@ impl SessionLocal {
     fn get_data_channels(&self, peer_id: String, label: String) -> Vec<Option<RTCDataChannel>> {
         Vec::new()
     }
-    fn fanout_message(&self, origin: String, label: String, msg: DataChannelMessage) {}
+    pub fn fanout_message(&self, origin: String, label: String, msg: DataChannelMessage) {}
     fn peers(&self) -> Vec<Arc<dyn Peer + Send + Sync>> {
         Vec::new()
     }

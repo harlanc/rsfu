@@ -476,7 +476,7 @@ impl Peer {
         *handler = Some(f);
     }
 
-    async fn create_data_channel(&mut self, label: String) -> Result<RTCDataChannel> {
+    pub async fn create_data_channel(&mut self, label: String) -> Result<RTCDataChannel> {
         let idx = self.dc_index;
 
         self.dc_index += 1;

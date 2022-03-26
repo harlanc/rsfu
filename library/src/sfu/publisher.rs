@@ -1,3 +1,4 @@
+use super::data_channel::DataChannel;
 use super::router::Router;
 use super::router::RouterLocal;
 use super::session::Session;
@@ -5,8 +6,12 @@ use super::sfu::WebRTCTransportConfig;
 use crate::buffer::rtcpreader::RTCPReader;
 use rtcp::packet::Packet as RtcpPacket;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU32, Ordering};
+use webrtc::data_channel::data_channel_message::DataChannelMessage;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
+use webrtc::ice_transport::ice_gatherer::OnLocalCandidateHdlrFn;
+use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
+use webrtc::peer_connection::signaling_state::RTCSignalingState;
 use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
@@ -70,7 +75,7 @@ struct Publisher {
 
 pub struct RelayPeer {
     peer: Peer,
-    data_channels: Vec<RTCDataChannel>,
+    data_channels: Vec<Arc<RTCDataChannel>>,
 
     with_sr_reports: bool,
     relay_fanout_data_channels: bool,
@@ -78,6 +83,7 @@ pub struct RelayPeer {
 
 struct TestA {}
 
+#[derive(Clone)]
 pub(super) struct PublisherTrack {
     track: Arc<TrackRemote>,
     receiver: Arc<Mutex<dyn Receiver + Send + Sync>>,
@@ -260,8 +266,131 @@ impl Publisher {
             }))
             .await;
 
-        self.router.lock().await.set_rtcp_writer(self.pc.write_rtcp);
+        self.router
+            .lock()
+            .await
+            .set_peer_connection(self.pc.clone());
     }
+
+    async fn answer(&self, offer: RTCSessionDescription) -> Result<RTCSessionDescription> {
+        self.pc.set_remote_description(offer).await?;
+
+        for c in &self.candidates {
+            if let Err(err) = self.pc.add_ice_candidate(c.clone()).await {}
+        }
+
+        let answer = self.pc.create_answer(None).await?;
+        self.pc.set_local_description(answer.clone()).await?;
+
+        Ok(answer)
+    }
+
+    fn get_router(&self) -> Arc<Mutex<dyn Router + Send + Sync>> {
+        self.router.clone()
+    }
+
+    async fn on_publisher_track_handler(&mut self, f: OnPublisherTrack) {
+        let mut handler = self.on_publisher_track.lock().await;
+        *handler = Some(f);
+    }
+
+    async fn on_ice_candidate_handler(&mut self, f: OnLocalCandidateHdlrFn) {
+        self.pc.on_ice_candidate(f).await;
+    }
+
+    async fn on_ice_connection_state_change_handler(&mut self, f: OnIceConnectionStateChange) {
+        let mut handler = self.on_ice_connection_state_change_hander.lock().await;
+        *handler = Some(f);
+    }
+
+    fn signaling_state(&self) -> RTCSignalingState {
+        self.pc.signaling_state()
+    }
+
+    fn peer_connection(&self) -> Arc<RTCPeerConnection> {
+        self.pc.clone()
+    }
+
+    //fn relay()
+
+    async fn publisher_tracks(&self) -> Vec<PublisherTrack> {
+        self.tracks.lock().await.clone()
+    }
+
+    async fn add_relay_fanout_data_channel(&mut self, label: &String) {
+        for rp in &mut *self.relay_peers.lock().await {
+            for dc in &rp.data_channels {
+                if dc.label() == label {
+                    continue;
+                }
+            }
+
+            let rv = rp.peer.create_data_channel(label.clone()).await;
+
+            if let Ok(dc) = rv {
+                let label_out = label.clone();
+                let session_out = Arc::clone(&mut self.session);
+                dc.on_message(Box::new(move |msg: DataChannelMessage| {
+                    let session_in = Arc::clone(&session_out);
+                    let label_in = label_out.clone();
+                    Box::pin(async move {
+                        session_in
+                            .lock()
+                            .await
+                            .fanout_message(String::from(""), label_in, msg)
+                    })
+                }))
+                .await;
+            }
+        }
+    }
+
+    async fn get_relayed_data_channels(&self, label: String) -> Vec<Arc<RTCDataChannel>> {
+        let mut data_channels = Vec::new();
+
+        for rp in &mut *self.relay_peers.lock().await {
+            for dc in &rp.data_channels {
+                if dc.label() == label {
+                    data_channels.push(dc.clone());
+                }
+            }
+        }
+        data_channels
+    }
+
+    fn relayed(&self) -> bool {
+        self.relayed.load(Ordering::Relaxed)
+    }
+
+    async fn tracks(&self) -> Vec<Arc<TrackRemote>> {
+        let mut tracks = Vec::new();
+
+        for publisher_track in &*self.tracks.lock().await {
+            tracks.push(publisher_track.track.clone())
+        }
+
+        tracks
+    }
+
+    async fn add_ice_candidata(&mut self, candidate: RTCIceCandidateInit) -> Result<()> {
+        if let Some(desp) = self.pc.remote_description().await {
+            self.pc.add_ice_candidate(candidate.clone()).await?;
+        }
+
+        self.candidates.push(candidate.clone());
+
+        Ok(())
+    }
+
+    // fn crate_relay_track(
+    //     &mut self,
+    //     track: TrackRemote,
+    //     receiver: Receiver,
+    //     rp: Peer,
+    // ) -> Result<()> {
+
+    //     Ok(())
+    // }
 
     async fn crate_relay_track(
         // &mut self,
@@ -355,10 +484,10 @@ impl Publisher {
 
             let sdr_out = sdr.clone();
 
-            downtrack_arc.on_close_hander(Box::new(move || {
-                let sdr_in = sdr_out.clone();
-                Box::pin(async move { if let Err(_) = sdr_in.stop().await {} })
-            }));
+            // downtrack_arc.on_close_hander(Box::new(move || {
+            //     let sdr_in = sdr_out.clone();
+            //     Box::pin(async move { if let Err(_) = sdr_in.stop().await {} })
+            // }));
 
             receiver_mg.add_down_track(downtrack_arc, true);
         }

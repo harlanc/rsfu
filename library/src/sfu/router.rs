@@ -14,6 +14,7 @@ use rtcp::raw_packet::RawPacket;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
 use webrtc::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
 use webrtc::track::track_remote::TrackRemote;
@@ -33,7 +34,13 @@ pub trait Router {
         stream_id: String,
     ) -> (Arc<Mutex<dyn Receiver + Send + Sync>>, bool);
     fn add_down_tracks(&mut self) -> Result<()>;
-    fn set_rtcp_writer(&mut self, writer: fn(Vec<Box<dyn RtcpPacket + Send + Sync>>) -> Result<()>);
+
+    // pub async fn write_rtcp(
+    //     &self,
+    //     pkts: &[Box<dyn rtcp::packet::Packet + Send + Sync>],
+    // ) -> Result<usize>
+
+    fn set_peer_connection(&mut self, pc: Arc<RTCPeerConnection>);
     fn add_down_track(
         &mut self,
         subscriber: Subscriber,
@@ -156,10 +163,7 @@ impl Router for RouterLocal {
         Ok(())
     }
 
-    fn set_rtcp_writer(
-        &mut self,
-        writer: fn(Vec<Box<dyn RtcpPacket + Send + Sync>>) -> Result<()>,
-    ) {
+    fn set_peer_connection(&mut self, pc: Arc<RTCPeerConnection>) {
         // Ok(());
     }
 }
