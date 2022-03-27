@@ -332,7 +332,7 @@ impl DownTrack {
         *handler = Some(f);
     }
 
-    async fn create_source_description_chunks(&self) -> Option<Vec<SourceDescriptionChunk>> {
+    pub async fn create_source_description_chunks(&self) -> Option<Vec<SourceDescriptionChunk>> {
         if !self.bound.load(Ordering::Relaxed) {
             return None;
         }

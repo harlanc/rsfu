@@ -11,6 +11,7 @@ keywords = ["webrtc", "video", "sfu"]
 edition = "2018"
 
 [dependencies]
+uuid = "0.8.2"
 bytesio = "0.1.27"
 rtcp = "0.6.5"
 rtp = "0.6.3"

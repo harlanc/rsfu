@@ -53,7 +53,7 @@ pub type OnPublisherTrack =
 //         + Send
 //         + Sync,
 // >;
-struct Publisher {
+pub struct Publisher {
     id: String,
 
     pc: Arc<RTCPeerConnection>,

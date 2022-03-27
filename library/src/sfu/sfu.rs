@@ -18,6 +18,7 @@ use webrtc::ice_transport::ice_candidate_type::RTCIceCandidateType;
 use webrtc::ice_transport::ice_credential_type::RTCIceCredentialType;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 
+use super::peer::SessionProvider;
 use crate::buffer::factory::AtomicFactory;
 use std::sync::Arc;
 use turn::auth::AuthHandler;
@@ -78,7 +79,7 @@ struct Config {
 struct SFU {
     webrtc: WebRTCTransportConfig,
     turn: Option<TurnServer>,
-    sessions: HashMap<String, Box<dyn Session>>,
+    sessions: HashMap<String, Arc<dyn Session + Send + Sync>>,
     data_channels: Vec<DataChannel>,
     with_status: bool,
 }
@@ -215,5 +216,16 @@ impl SFU {
         }
 
         Ok(sfu)
+    }
+}
+
+impl SessionProvider for SFU {
+    fn get_session(
+        &mut self,
+        sid: String,
+    ) -> (Arc<dyn Session + Send + Sync>, WebRTCTransportConfig) {
+        if let Some(session) = self.sessions.get(&sid) {
+            return (session, self.webrtc);
+        }
     }
 }
