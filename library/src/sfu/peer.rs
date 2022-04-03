@@ -39,7 +39,7 @@ pub type OnIceConnectionStateChangeFn = Box<
 
 pub trait Peer {
     fn id(&self) -> String;
-    fn session(&self) -> Arc<dyn Session + Send + Sync>;
+    fn session(&self) -> Option<Arc<Mutex<dyn Session + Send + Sync>>>;
     // fn publisher() -> Arc<Publisher>;
     // fn subscriber() -> Arc<Subscriber>;
     // fn close() -> Result<()>;
@@ -47,16 +47,19 @@ pub trait Peer {
 }
 
 struct JoinConfig {
-    no_publish: bool,
-    no_subscribe: bool,
-    no_auto_subscribe: bool,
+    pub no_publish: bool,
+    pub no_subscribe: bool,
+    pub no_auto_subscribe: bool,
 }
 
 pub trait SessionProvider {
     fn get_session(
         &mut self,
         sid: String,
-    ) -> (Arc<dyn Session + Send + Sync>, WebRTCTransportConfig);
+    ) -> (
+        Option<Arc<Mutex<dyn Session + Send + Sync>>>,
+        Arc<WebRTCTransportConfig>,
+    );
 }
 
 struct ChannelAPIMessage {
@@ -64,14 +67,14 @@ struct ChannelAPIMessage {
     params: Vec<String>,
 }
 
-#[derive(Default)]
+// #[derive(Default)]
 struct PeerLocal {
     id: String,
-    session: Option<Arc<dyn Session + Send + Sync>>,
+    session: Option<Arc<Mutex<dyn Session + Send + Sync>>>,
     closed: AtomicBool,
-    provider: Arc<dyn SessionProvider + Send + Sync>,
-    publisher: Publisher,
-    subscriber: Subscriber,
+    provider: Arc<Mutex<dyn SessionProvider + Send + Sync>>,
+    publisher: Option<Publisher>,
+    subscriber: Option<Subscriber>,
 
     on_offer_handler: Arc<Mutex<Option<OnOfferFn>>>,
     on_ice_candidate: Arc<Mutex<Option<OnIceCandidateFn>>>,
@@ -82,28 +85,43 @@ struct PeerLocal {
 }
 
 impl PeerLocal {
-    fn new(provider: Arc<dyn SessionProvider + Send + Sync>) -> Self {
+    fn new(provider: Arc<Mutex<dyn SessionProvider + Send + Sync>>) -> Self {
         PeerLocal {
+            id: String::from(""),
+            session: None,
+            closed: AtomicBool::new(false),
             provider,
-            ..Default::default()
+            publisher: None,
+            subscriber: None,
+
+            on_offer_handler: Arc::new(Mutex::new(None)),
+            on_ice_candidate: Arc::new(Mutex::new(None)),
+            on_ice_connection_state_change: Arc::new(Mutex::new(None)),
+
+            remote_answer_pending: false,
+            negotiation_pending: false,
         }
     }
 
-    fn join(&mut self, sid: String, uid: String, cfg: JoinConfig) -> Result<()> {
-        if self.session != None {
+    async fn join(&mut self, sid: String, uid: String, cfg: JoinConfig) -> Result<()> {
+        if self.session.is_none() {
             return Err(Error::ErrTransportExists.into());
         }
 
-        let uuid: String;
+        let mut uuid: String = uid.clone();
         if uid == String::from("") {
             uuid = Uuid::new_v4().to_string();
         }
 
-        self.id = uuid;
+        self.id = uuid.clone();
 
-        let (s, cfg) = self.provider.get_session(sid);
+        let (s, webrtc_transport_cfg) = self.provider.lock().await.get_session(sid);
 
         self.session = s;
+
+        if !cfg.no_subscribe {
+            let subscriber = Subscriber::new(uuid, webrtc_transport_cfg).await?;
+        }
 
         Ok(())
     }
@@ -114,7 +132,7 @@ impl Peer for PeerLocal {
         self.id.clone()
     }
 
-    fn session(&self) -> Arc<dyn Session + Send + Sync> {
+    fn session(&self) -> Option<Arc<Mutex<dyn Session + Send + Sync>>> {
         self.session.clone()
     }
 }

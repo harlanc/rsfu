@@ -77,9 +77,9 @@ struct Config {
 
 #[derive(Default)]
 struct SFU {
-    webrtc: WebRTCTransportConfig,
+    webrtc: Arc<WebRTCTransportConfig>,
     turn: Option<TurnServer>,
-    sessions: HashMap<String, Arc<dyn Session + Send + Sync>>,
+    sessions: HashMap<String, Arc<Mutex<dyn Session + Send + Sync>>>,
     data_channels: Vec<DataChannel>,
     with_status: bool,
 }
@@ -199,7 +199,7 @@ impl WebRTCTransportConfig {
 
 impl SFU {
     async fn new(c: Config) -> Result<Self> {
-        let w = WebRTCTransportConfig::new(&c).await.unwrap();
+        let w = Arc::new(WebRTCTransportConfig::new(&c).await.unwrap());
 
         let with_status = w.Router.with_stats;
 
@@ -223,9 +223,19 @@ impl SessionProvider for SFU {
     fn get_session(
         &mut self,
         sid: String,
-    ) -> (Arc<dyn Session + Send + Sync>, WebRTCTransportConfig) {
-        if let Some(session) = self.sessions.get(&sid) {
-            return (session, self.webrtc);
+    ) -> (
+        Option<Arc<Mutex<dyn Session + Send + Sync>>>,
+        Arc<WebRTCTransportConfig>,
+    ) {
+        let s = self.sessions.get(&sid);
+        match s {
+            Some(val) => return (Some(val.clone()), self.webrtc.clone()),
+            None => return (None, self.webrtc.clone()),
         }
+        //  (s.clone(), self.webrtc)
+
+        // if let Some(session) = self.sessions.get(&sid) {
+        //     return (session, self.webrtc);
+        // }
     }
 }

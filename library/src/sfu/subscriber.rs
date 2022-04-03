@@ -6,6 +6,7 @@ use webrtc::api::media_engine::MediaEngine;
 use webrtc::data_channel::RTCDataChannel;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
+use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::rtcp::source_description::SourceDescription;
@@ -21,7 +22,8 @@ use super::down_track::DownTrack;
 use super::media_engine;
 use super::sfu::WebRTCTransportConfig;
 
-use anyhow::Result;
+use super::errors::Error;
+use super::errors::Result;
 
 pub const API_CHANNEL_LABEL: &'static str = "rsfu";
 
@@ -41,15 +43,23 @@ pub struct Subscriber {
 }
 
 impl Subscriber {
-    async fn new(id: String, cfg: WebRTCTransportConfig) -> Result<Subscriber> {
+    pub async fn new(id: String, cfg: Arc<WebRTCTransportConfig>) -> Result<Subscriber> {
         let me = media_engine::get_subscriber_media_engine()?;
+
+        // let transport_cfg = cfg.lock().await;
 
         let api = api::APIBuilder::new()
             .with_media_engine(me)
-            .with_setting_engine(cfg.setting)
+            .with_setting_engine(cfg.setting.clone())
             .build();
 
-        let pc = api.new_peer_connection(cfg.configuration).await?;
+        let pc = api
+            .new_peer_connection(RTCConfiguration {
+                ice_servers: cfg.configuration.ice_servers.clone(),
+                sdp_semantics: cfg.configuration.sdp_semantics.clone(),
+                ..Default::default()
+            })
+            .await?;
 
         let subscriber = Subscriber {
             id,
@@ -177,8 +187,13 @@ impl Subscriber {
         });
     }
 
-    async fn close(&mut self) -> Result<(), webrtc::Error> {
-        self.pc.close().await
+    async fn close(&mut self) -> Result<()> {
+        match self.pc.close().await {
+            Err(error) => {
+                return Err(Error::ErrWebRTC(error));
+            }
+            Ok(()) => return Ok(()),
+        }
     }
 
     //async fn add_data_channel(peer: Pee)
