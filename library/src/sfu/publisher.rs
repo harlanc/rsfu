@@ -244,7 +244,10 @@ impl Publisher {
                 }
 
                 Box::pin(async move {
+                    let s = session_in.lock().await;
                     session_in.lock().await.add_data_channel(peer_id, d);
+
+                    let s = session_in.lock().await;
                 })
             }))
             .await;
@@ -290,16 +293,16 @@ impl Publisher {
         self.router.clone()
     }
 
-    async fn on_publisher_track_handler(&mut self, f: OnPublisherTrack) {
+    async fn on_publisher_track(&mut self, f: OnPublisherTrack) {
         let mut handler = self.on_publisher_track.lock().await;
         *handler = Some(f);
     }
 
-    async fn on_ice_candidate_handler(&mut self, f: OnLocalCandidateHdlrFn) {
+    async fn on_ice_candidate(&mut self, f: OnLocalCandidateHdlrFn) {
         self.pc.on_ice_candidate(f).await;
     }
 
-    async fn on_ice_connection_state_change_handler(&mut self, f: OnIceConnectionStateChange) {
+    async fn on_ice_connection_state_change(&mut self, f: OnIceConnectionStateChange) {
         let mut handler = self.on_ice_connection_state_change_hander.lock().await;
         *handler = Some(f);
     }

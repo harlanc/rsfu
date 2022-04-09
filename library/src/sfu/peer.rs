@@ -80,8 +80,8 @@ struct PeerLocal {
     on_ice_candidate: Arc<Mutex<Option<OnIceCandidateFn>>>,
     on_ice_connection_state_change: Arc<Mutex<Option<OnIceConnectionStateChangeFn>>>,
 
-    remote_answer_pending: bool,
-    negotiation_pending: bool,
+    remote_answer_pending: Arc<bool>,
+    negotiation_pending: Arc<AtomicBool>,
 }
 
 impl PeerLocal {
@@ -98,8 +98,8 @@ impl PeerLocal {
             on_ice_candidate: Arc::new(Mutex::new(None)),
             on_ice_connection_state_change: Arc::new(Mutex::new(None)),
 
-            remote_answer_pending: false,
-            negotiation_pending: false,
+            remote_answer_pending: Arc::new(false),
+            negotiation_pending: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -120,7 +120,27 @@ impl PeerLocal {
         self.session = s;
 
         if !cfg.no_subscribe {
-            let subscriber = Subscriber::new(uuid, webrtc_transport_cfg).await?;
+            let mut subscriber = Subscriber::new(uuid, webrtc_transport_cfg).await?;
+            subscriber.no_auto_subscribe = cfg.no_auto_subscribe;
+
+            let remote_answer_pending_out = self.remote_answer_pending.clone();
+            let negotiation_pending_out = self.negotiation_pending.clone();
+            subscriber
+                .on_negotiate(Box::new(move || {
+                    let remote_answer_pending_in = remote_answer_pending_out.clone();
+                    let negotiation_pending_in = negotiation_pending_out.clone();
+
+                    Box::pin(async move {
+                        if *remote_answer_pending_in {
+                            (*negotiation_pending_in).store(true, Ordering::Relaxed);
+                            return;
+                        }
+                        
+                    })
+                }))
+                .await;
+
+            self.subscriber = Some(subscriber);
         }
 
         Ok(())

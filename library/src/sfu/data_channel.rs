@@ -1,6 +1,6 @@
-pub(super) struct DataChannel {
+pub struct DataChannel {
     label: String,
-    // middlewares
+    // middlewares2S2WXEFRTHM YJUG G6345EYTFH 
 }
 
 //trait 

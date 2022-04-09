@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU32, Ordering};
 use webrtc::api;
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::data_channel::RTCDataChannel;
+use webrtc::data_channel::data_channel_init::RTCDataChannelInit;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
 use webrtc::peer_connection::configuration::RTCConfiguration;
@@ -11,6 +12,7 @@ use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::rtcp::source_description::SourceDescription;
 
+use super::peer::Peer;
 use std::future::Future;
 use std::io::Write;
 use std::pin::Pin;
@@ -27,7 +29,7 @@ use super::errors::Result;
 
 pub const API_CHANNEL_LABEL: &'static str = "rsfu";
 
-pub type NegotiateFn =
+pub type OnNegotiateFn =
     Box<dyn (FnMut() -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>) + Send + Sync>;
 
 pub struct Subscriber {
@@ -38,8 +40,8 @@ pub struct Subscriber {
     tracks: HashMap<String, Vec<DownTrack>>,
     channels: HashMap<String, Vec<RTCDataChannel>>,
     candidates: Vec<RTCIceCandidateInit>,
-    negotiate: Arc<Mutex<Option<NegotiateFn>>>,
-    no_auto_subscribe: bool,
+    on_negotiate_handler: Arc<Mutex<Option<OnNegotiateFn>>>,
+    pub no_auto_subscribe: bool,
 }
 
 impl Subscriber {
@@ -68,7 +70,7 @@ impl Subscriber {
             tracks: HashMap::new(),
             channels: HashMap::new(),
             candidates: Vec::new(),
-            negotiate: Arc::new(Mutex::new(None)),
+            on_negotiate_handler: Arc::new(Mutex::new(None)),
             no_auto_subscribe: false,
         };
 
@@ -196,5 +198,18 @@ impl Subscriber {
         }
     }
 
-    //async fn add_data_channel(peer: Pee)
+    pub async fn on_negotiate(&mut self, f: OnNegotiateFn) {
+        let mut handler = self.on_negotiate_handler.lock().await;
+        *handler = Some(f);
+    }
+
+    async fn add_data_channel(
+        &mut self,
+        peer: Arc<dyn Peer + Send + Sync>,
+        dc: RTCDataChannel,
+    ) -> Result<()> {
+
+        self.pc.create_data_channel(dc.label(),Some(RTCDataChannelInit::default())).await?;
+        Ok(())
+    }
 }
