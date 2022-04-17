@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU32, Ordering};
 use webrtc::api;
 use webrtc::api::media_engine::MediaEngine;
-use webrtc::data_channel::RTCDataChannel;
 use webrtc::data_channel::data_channel_init::RTCDataChannelInit;
+use webrtc::data_channel::RTCDataChannel;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
 use webrtc::peer_connection::configuration::RTCConfiguration;
@@ -38,7 +38,7 @@ pub struct Subscriber {
     me: MediaEngine,
 
     tracks: HashMap<String, Vec<DownTrack>>,
-    channels: HashMap<String, Vec<RTCDataChannel>>,
+    channels: HashMap<String, Option<Arc<RTCDataChannel>>>,
     candidates: Vec<RTCIceCandidateInit>,
     on_negotiate_handler: Arc<Mutex<Option<OnNegotiateFn>>>,
     pub no_auto_subscribe: bool,
@@ -208,8 +208,16 @@ impl Subscriber {
         peer: Arc<dyn Peer + Send + Sync>,
         dc: RTCDataChannel,
     ) -> Result<()> {
-
-        self.pc.create_data_channel(dc.label(),Some(RTCDataChannelInit::default())).await?;
+        self.pc
+            .create_data_channel(dc.label(), Some(RTCDataChannelInit::default()))
+            .await?;
         Ok(())
+    }
+
+    pub fn data_channel(self, label: String) -> Option<Arc<RTCDataChannel>> {
+        if let Some(rtc_data_channel) = self.channels.get(&label) {
+            return rtc_data_channel.clone();
+        }
+        None
     }
 }

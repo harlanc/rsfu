@@ -245,9 +245,11 @@ impl Publisher {
 
                 Box::pin(async move {
                     let s = session_in.lock().await;
-                    session_in.lock().await.add_data_channel(peer_id, d);
 
-                    let s = session_in.lock().await;
+                    // let ss = Arc::new(s);
+                    // ss.add_data_channel(peer_id, d);
+
+                    //let s = session_in.lock().await;
                 })
             }))
             .await;

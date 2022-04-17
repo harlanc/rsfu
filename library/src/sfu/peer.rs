@@ -41,7 +41,7 @@ pub trait Peer {
     fn id(&self) -> String;
     fn session(&self) -> Option<Arc<Mutex<dyn Session + Send + Sync>>>;
     // fn publisher() -> Arc<Publisher>;
-    // fn subscriber() -> Arc<Subscriber>;
+    fn subscriber(&self) -> Option<Arc<Subscriber>>;
     // fn close() -> Result<()>;
     // fn send_data_channel_message(label: String, msg: Bytes) -> Result<()>;
 }
@@ -74,7 +74,7 @@ struct PeerLocal {
     closed: AtomicBool,
     provider: Arc<Mutex<dyn SessionProvider + Send + Sync>>,
     publisher: Option<Publisher>,
-    subscriber: Option<Subscriber>,
+    subscriber: Option<Arc<Subscriber>>,
 
     on_offer_handler: Arc<Mutex<Option<OnOfferFn>>>,
     on_ice_candidate: Arc<Mutex<Option<OnIceCandidateFn>>>,
@@ -135,12 +135,11 @@ impl PeerLocal {
                             (*negotiation_pending_in).store(true, Ordering::Relaxed);
                             return;
                         }
-                        
                     })
                 }))
                 .await;
 
-            self.subscriber = Some(subscriber);
+            self.subscriber = Some(Arc::new(subscriber));
         }
 
         Ok(())
@@ -154,5 +153,9 @@ impl Peer for PeerLocal {
 
     fn session(&self) -> Option<Arc<Mutex<dyn Session + Send + Sync>>> {
         self.session.clone()
+    }
+
+    fn subscriber(&self) -> Option<Arc<Subscriber>> {
+        self.subscriber.clone()
     }
 }

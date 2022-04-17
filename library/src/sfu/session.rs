@@ -200,10 +200,10 @@ impl Session for SessionLocal {
     }
 
     fn add_data_channel(self: Arc<Self>, owner: String, dc: Arc<RTCDataChannel>) {
-        let label = dc.label();
+        // let label = dc.label();
 
-        let s = self.clone();
-        let owner_out = owner.clone();
+        // let s = self.clone();
+        // let owner_out = owner.clone();
 
         // for lab in &self.fanout_data_channels {
         //     if label == lab {
@@ -219,6 +219,17 @@ impl Session for SessionLocal {
     }
 
     fn get_data_channels(&self, peer_id: String, label: String) -> Vec<Arc<RTCDataChannel>> {
+        for (k, v) in &self.peers {
+            if k.clone() == peer_id {
+                continue;
+            }
+
+            if let Some(sub) = &v.subscriber() {
+             //   let s = sub.clone();
+                sub.data_channel(label.clone());
+            }
+        }
+
         Vec::new()
     }
     fn fanout_message(&self, origin: String, label: String, msg: DataChannelMessage) {}
