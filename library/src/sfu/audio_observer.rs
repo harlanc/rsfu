@@ -69,7 +69,7 @@ impl AudioObserver {
         }
     }
 
-    async fn calc(&mut self) -> Option<Vec<String>> {
+    pub async fn calc(&mut self) -> Option<Vec<String>> {
         let mut streams = self.streams.lock().await;
 
         streams.sort_by(|a, b| {

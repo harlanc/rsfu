@@ -15,6 +15,7 @@ use webrtc::sdp::description::session::SessionDescription;
 
 use super::errors::Error;
 use super::errors::Result;
+use serde::{Deserialize, Serialize};
 
 const PUBLISHER: u8 = 0;
 const SUBSCRIBER: u8 = 1;
@@ -62,9 +63,12 @@ pub trait SessionProvider {
     );
 }
 
-struct ChannelAPIMessage {
-    method: String,
-    params: Vec<String>,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelAPIMessage {
+    #[serde(rename = "method")]
+    pub method: String,
+    #[serde(rename = "parameters")]
+    pub params: Vec<String>,
 }
 
 // #[derive(Default)]

@@ -54,7 +54,7 @@ pub struct RouterConfig {
     pub(super) with_stats: bool,
     max_bandwidth: u64,
     pub max_packet_track: i32,
-    audio_level_interval: i32,
+    pub audio_level_interval: i32,
     audio_level_threshold: u8,
     audio_level_filter: i32,
     simulcast: SimulcastConfig,

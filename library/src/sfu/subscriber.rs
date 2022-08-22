@@ -214,7 +214,7 @@ impl Subscriber {
         Ok(())
     }
 
-    pub fn data_channel(self, label: String) -> Option<Arc<RTCDataChannel>> {
+    pub fn data_channel(&self, label: String) -> Option<Arc<RTCDataChannel>> {
         if let Some(rtc_data_channel) = self.channels.get(&label) {
             return rtc_data_channel.clone();
         }

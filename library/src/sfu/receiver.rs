@@ -122,7 +122,7 @@ impl Receiver for WebRTCReceiver {
         self.track_id = track_id;
     }
     fn add_up_track(&mut self, track: TrackRemote, buffer: Buffer, best_quality_first: bool) {
-        if self.closed.load(Ordering::Release) {
+        if self.closed.load(Ordering::Acquire) {
             return;
         }
 

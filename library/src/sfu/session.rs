@@ -1,5 +1,6 @@
 use super::audio_observer::AudioObserver;
 use super::data_channel::DataChannel;
+use super::peer::ChannelAPIMessage;
 use super::peer::Peer;
 use super::receiver::Receiver;
 use super::relay_peer::RelayPeer;
@@ -13,10 +14,13 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use webrtc::data_channel::data_channel_message::DataChannelMessage;
+use webrtc::data_channel::data_channel_state::RTCDataChannelState;
 use webrtc::data_channel::RTCDataChannel;
 
 use tokio::sync::{Mutex, MutexGuard};
+use tokio::time::{sleep, Duration};
 
+use super::subscriber::API_CHANNEL_LABEL;
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
@@ -46,7 +50,7 @@ pub trait Session {
     fn add_data_channel(self: Arc<Self>, owner: String, dc: Arc<RTCDataChannel>);
     fn get_data_channel_middlewares(&self) -> Vec<Arc<DataChannel>>;
     fn get_fanout_data_channel_labels(&self) -> Vec<String>;
-    fn get_data_channels(&self, peer_id: String, label: String) -> Vec<Arc<RTCDataChannel>>;
+    async fn get_data_channels(&self, peer_id: String, label: String) -> Vec<Arc<RTCDataChannel>>;
     fn fanout_message(&self, origin: String, label: String, msg: DataChannelMessage);
     fn peers(&self) -> Vec<Arc<dyn Peer + Send + Sync>>;
     fn relay_peers(&self) -> Vec<Option<RelayPeer>>;
@@ -74,7 +78,7 @@ impl SessionLocal {
     ) -> Arc<Mutex<dyn Session + Send + Sync>> {
         let s = SessionLocal {
             id,
-            config,
+            config: config.clone(),
             peers: HashMap::new(),
             relay_peers: Arc::new(Mutex::new(HashMap::new())),
             closed: AtomicBool::new(false),
@@ -84,7 +88,18 @@ impl SessionLocal {
             on_close_handler: Arc::new(Mutex::new(None)),
         };
 
-        return Arc::new(Mutex::new(s));
+        let session_local = Arc::new(Mutex::new(s));
+        let session_local_in = session_local.clone();
+
+        tokio::spawn(async move {
+            session_local_in
+                .lock()
+                .await
+                .audio_level_observer(config.Router.audio_level_interval)
+                .await;
+        });
+
+        session_local
     }
 
     async fn get_relay_peer(&self, peer_id: String) -> Option<Arc<RelayPeer>> {
@@ -103,6 +118,44 @@ impl SessionLocal {
 
         if let Some(f) = &mut *close_handler {
             f().await;
+        }
+    }
+
+    async fn audio_level_observer(&mut self, audio_level_interval: i32) -> Result<()> {
+        let mut audio_level_interval_new: u64 = audio_level_interval as u64;
+        if audio_level_interval_new == 0 {
+            audio_level_interval_new = 1000
+        }
+
+        loop {
+            sleep(Duration::from_millis(audio_level_interval_new)).await;
+
+            if self.closed.load(Ordering::Relaxed) {
+                return Ok(());
+            }
+
+            if let Some(audio_observer) = &mut self.audio_observer {
+                match audio_observer.calc().await {
+                    Some(levels) => {
+                        let msg = ChannelAPIMessage {
+                            method: String::from(AUDIO_LEVELS_METHOD),
+                            params: levels,
+                        };
+                        let msg_str = serde_json::to_string(&msg)?;
+
+                        let dcs = self
+                            .get_data_channels(String::from(""), String::from(API_CHANNEL_LABEL))
+                            .await;
+
+                        for dc in dcs {
+                            dc.send_text(msg_str.clone()).await?;
+                        }
+                    }
+                    None => {
+                        continue;
+                    }
+                }
+            }
         }
     }
 }
@@ -218,21 +271,36 @@ impl Session for SessionLocal {
         // }
     }
 
-    fn get_data_channels(&self, peer_id: String, label: String) -> Vec<Arc<RTCDataChannel>> {
+    async fn get_data_channels(&self, peer_id: String, label: String) -> Vec<Arc<RTCDataChannel>> {
+        let mut data_channels: Vec<Arc<RTCDataChannel>> = Vec::new();
+
         for (k, v) in &self.peers {
             if k.clone() == peer_id {
                 continue;
             }
 
-            if let Some(sub) = &v.subscriber() {
-             //   let s = sub.clone();
-                sub.data_channel(label.clone());
+            if let Some(sub) = v.subscriber() {
+                if let Some(dc) = sub.data_channel(label.clone()) {
+                    if dc.ready_state() == RTCDataChannelState::Open {
+                        data_channels.push(dc);
+                    }
+                }
             }
         }
 
-        Vec::new()
+        // todo
+        // for (k, v) in &*self.relay_peers.lock().await {
+        //     if let Some(dc) = v.data_channel(label.clone()) {
+
+        //     }
+        // }
+
+        data_channels
     }
-    fn fanout_message(&self, origin: String, label: String, msg: DataChannelMessage) {}
+
+    fn fanout_message(&self, origin: String, label: String, msg: DataChannelMessage) {
+        
+    }
     fn peers(&self) -> Vec<Arc<dyn Peer + Send + Sync>> {
         Vec::new()
     }
