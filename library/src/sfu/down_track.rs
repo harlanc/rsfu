@@ -53,7 +53,7 @@ enum DownTrackType {
 }
 
 pub struct DownTrack {
-    id: String,
+    pub id: String,
     peer_id: String,
     pub bound: AtomicBool,
     mime: Mutex<String>,
@@ -605,7 +605,10 @@ impl DownTrack {
                             <= self.max_spatial_layer.load(Ordering::Relaxed)
                         && current_spatial_layer + 1 <= 2
                     {
-                        match self.switch_spatial_layer(current_spatial_layer + 1, false).await {
+                        match self
+                            .switch_spatial_layer(current_spatial_layer + 1, false)
+                            .await
+                        {
                             Ok(_) => {
                                 self.switch_temporal_layer(0, false);
                             }
@@ -622,7 +625,10 @@ impl DownTrack {
                         && current_spatial_layer > 0
                         && brs[current_spatial_layer as usize - 1] != 0
                     {
-                        match self.switch_spatial_layer(current_spatial_layer - 1, false).await {
+                        match self
+                            .switch_spatial_layer(current_spatial_layer - 1, false)
+                            .await
+                        {
                             Err(_) => {
                                 self.switch_temporal_layer(
                                     mtl[current_spatial_layer as usize - 1],

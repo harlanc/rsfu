@@ -13,10 +13,12 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use turn::proto::data;
 use webrtc::data_channel::data_channel_message::DataChannelMessage;
 use webrtc::data_channel::data_channel_state::RTCDataChannelState;
 use webrtc::data_channel::RTCDataChannel;
 
+use std::str;
 use tokio::sync::{Mutex, MutexGuard};
 use tokio::time::{sleep, Duration};
 
@@ -47,13 +49,13 @@ pub trait Session {
     ) -> Result<String>;
     fn audio_obserber(&mut self) -> Option<&mut AudioObserver>;
 
-    fn add_data_channel(self: Arc<Self>, owner: String, dc: Arc<RTCDataChannel>);
+    fn add_data_channel(&mut self, owner: String, dc: Arc<RTCDataChannel>);
     fn get_data_channel_middlewares(&self) -> Vec<Arc<DataChannel>>;
     fn get_fanout_data_channel_labels(&self) -> Vec<String>;
     async fn get_data_channels(&self, peer_id: String, label: String) -> Vec<Arc<RTCDataChannel>>;
-    fn fanout_message(&self, origin: String, label: String, msg: DataChannelMessage);
+    async fn fanout_message(&self, origin: String, label: String, msg: DataChannelMessage);
     fn peers(&self) -> Vec<Arc<dyn Peer + Send + Sync>>;
-    fn relay_peers(&self) -> Vec<Option<RelayPeer>>;
+    async fn relay_peers(&self) -> Vec<Arc<RelayPeer>>;
 
     // fn subscribe()
 }
@@ -252,23 +254,29 @@ impl Session for SessionLocal {
         Ok(resp)
     }
 
-    fn add_data_channel(self: Arc<Self>, owner: String, dc: Arc<RTCDataChannel>) {
-        // let label = dc.label();
+    fn add_data_channel(&mut self, owner: String, dc: Arc<RTCDataChannel>) {
+        let label = dc.label().to_string();
 
-        // let s = self.clone();
-        // let owner_out = owner.clone();
+        //let s = self.clone();
+        let owner_out = owner.clone();
 
-        // for lab in &self.fanout_data_channels {
-        //     if label == lab {
-        //         dc.on_message(Box::new(move |msg: DataChannelMessage| {
-        //             let owner_in = owner_out.clone();
-        //             Box::pin(async move {
-        //                 s.fanout_message(owner_in, label.to_string(), msg);
-        //             })
-        //         }));
-        //         return;
-        //     }
-        // }
+        for lbl in &self.fanout_data_channels {
+            if label == lbl.clone() {
+                // dc.on_message(Box::new(move |msg: DataChannelMessage| {
+                //     let owner_in = owner_out.clone();
+                //     Box::pin(async move {
+                //         s.fanout_message(owner_in, label.to_string(), msg);
+                //     })
+                // }));
+                return;
+            }
+        }
+
+        self.fanout_data_channels.push(label);
+        let peer_owner = self.peers.get(&owner).unwrap();
+        let sub = peer_owner.subscriber().unwrap();
+        // sub.re
+        let peers = self.peers();
     }
 
     async fn get_data_channels(&self, peer_id: String, label: String) -> Vec<Arc<RTCDataChannel>> {
@@ -280,7 +288,7 @@ impl Session for SessionLocal {
             }
 
             if let Some(sub) = v.subscriber() {
-                if let Some(dc) = sub.data_channel(label.clone()) {
+                if let Some(dc) = sub.lock().await.data_channel(label.clone()) {
                     if dc.ready_state() == RTCDataChannelState::Open {
                         data_channels.push(dc);
                     }
@@ -298,14 +306,34 @@ impl Session for SessionLocal {
         data_channels
     }
 
-    fn fanout_message(&self, origin: String, label: String, msg: DataChannelMessage) {
-        
+    async fn fanout_message(&self, origin: String, label: String, msg: DataChannelMessage) {
+        let data_channels = self.get_data_channels(origin, label).await;
+
+        for dc in data_channels {
+            let s = match str::from_utf8(msg.data.as_ref()) {
+                Ok(v) => v,
+                Err(e) => panic!("Invalid UTF-8 sequence: {}", e),
+            };
+            if msg.is_string {
+                dc.send_text(s.to_string()).await;
+            } else {
+                dc.send(&msg.data).await;
+            }
+        }
     }
     fn peers(&self) -> Vec<Arc<dyn Peer + Send + Sync>> {
-        Vec::new()
+        let mut peers: Vec<Arc<dyn Peer + Send + Sync>> = Vec::new();
+        for (k, v) in &self.peers {
+            peers.push(v.clone());
+        }
+        peers
     }
-    fn relay_peers(&self) -> Vec<Option<RelayPeer>> {
-        Vec::new()
+    async fn relay_peers(&self) -> Vec<Arc<RelayPeer>> {
+        let mut relay_peers: Vec<Arc<RelayPeer>> = Vec::new();
+        for (k, v) in &*self.relay_peers.lock().await {
+            relay_peers.push(v.clone());
+        }
+        relay_peers
     }
 
     fn publish(

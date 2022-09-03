@@ -1,14 +1,19 @@
 use std::collections::HashMap;
 
+use sdp::SessionDescription;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU32, Ordering};
 use webrtc::api;
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::data_channel::data_channel_init::RTCDataChannelInit;
+use webrtc::data_channel::data_channel_message::DataChannelMessage;
 use webrtc::data_channel::RTCDataChannel;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
+
+use webrtc::ice_transport::ice_gatherer::OnLocalCandidateHdlrFn;
+use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::rtcp::source_description::SourceDescription;
 
@@ -20,25 +25,32 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 
+use std::sync::Mutex as SyncMutex;
+
 use super::down_track::DownTrack;
 use super::media_engine;
 use super::sfu::WebRTCTransportConfig;
+use std::rc::Rc;
 
-use super::errors::Error;
-use super::errors::Result;
+use super::data_channel::Middlewares;
+use super::data_channel::{DataChannel, ProcessArgs, ProcessFunc};
+// use super::errors::SfuErrorValue;
+// use super::errors::{Result, SfuError};
+
+use anyhow::Result;
 
 pub const API_CHANNEL_LABEL: &'static str = "rsfu";
 
 pub type OnNegotiateFn =
-    Box<dyn (FnMut() -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>) + Send + Sync>;
+    Box<dyn (FnMut() -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>) + Send + Sync>;
 
 pub struct Subscriber {
     id: String,
     pc: Arc<RTCPeerConnection>,
     me: MediaEngine,
 
-    tracks: HashMap<String, Vec<DownTrack>>,
-    channels: HashMap<String, Option<Arc<RTCDataChannel>>>,
+    tracks: HashMap<String, Vec<Arc<DownTrack>>>,
+    channels: HashMap<String, Arc<RTCDataChannel>>,
     candidates: Vec<RTCIceCandidateInit>,
     on_negotiate_handler: Arc<Mutex<Option<OnNegotiateFn>>>,
     pub no_auto_subscribe: bool,
@@ -77,6 +89,129 @@ impl Subscriber {
         subscriber.on_ice_connection_state_change().await;
 
         Ok(subscriber)
+    }
+
+    pub async fn add_data_channel(
+        &mut self,
+        peer: Arc<dyn Peer + Send + Sync>,
+        dc: Arc<Mutex<DataChannel>>,
+    ) -> Result<()> {
+        let ndc = self
+            .pc
+            .create_data_channel(
+                &dc.lock().await.label[..],
+                Some(RTCDataChannelInit::default()),
+            )
+            .await?;
+
+        let dc_out = dc.clone();
+        let mws = Middlewares::new(dc.lock().await.middlewares.clone());
+
+        let p = mws.process(Arc::new(SyncMutex::new(ProcessFunc::new(Box::new(
+            move |args: ProcessArgs| {
+                let dc_in = Arc::clone(&dc_out);
+                Box::pin(async move {
+                    let f = dc_in.lock().await;
+                    if let Some(on_message) = f.on_message {
+                        on_message(args);
+                    }
+                })
+            },
+        )))));
+
+        let ndc_out = ndc.clone();
+        let peer_out = peer.clone();
+
+        ndc.on_message(Box::new(move |msg: DataChannelMessage| {
+            let p_in = Arc::clone(&p);
+            let ndc_in = ndc_out.clone();
+            let peer_in = peer_out.clone();
+            Box::pin(async move {
+                let mut f = p_in.lock().unwrap();
+
+                f.process(ProcessArgs {
+                    peer: peer_in,
+                    message: msg,
+                    data_channel: ndc_in,
+                })
+            })
+        }))
+        .await;
+
+        self.channels
+            .insert(dc.lock().await.label.clone(), ndc.clone());
+
+        Ok(())
+    }
+
+    pub fn data_channel(&self, label: String) -> Option<Arc<RTCDataChannel>> {
+        if let Some(rtc_data_channel) = self.channels.get(&label) {
+            return Some(rtc_data_channel.clone());
+        }
+        None
+    }
+
+    pub async fn on_negotiate(&mut self, f: OnNegotiateFn) {
+        let mut handler = self.on_negotiate_handler.lock().await;
+        *handler = Some(f);
+    }
+
+    pub async fn create_offer(&self) -> Result<RTCSessionDescription> {
+        let offer = self.pc.create_offer(None).await?;
+        self.pc.set_local_description(offer.clone()).await?;
+
+        Ok(offer)
+    }
+
+    pub async fn on_ice_candidate(&self, f: OnLocalCandidateHdlrFn) {
+        self.pc.on_ice_candidate(f).await
+    }
+
+    async fn add_ice_candidate(&mut self, candidate: RTCIceCandidateInit) -> Result<()> {
+        if let Some(descripton) = self.pc.remote_description().await {
+            self.pc.add_ice_candidate(candidate).await?;
+            return Ok(());
+        }
+
+        self.candidates.push(candidate);
+        Ok(())
+    }
+
+    fn add_down_track(&mut self, stream_id: String, down_track: Arc<DownTrack>) {
+        if let Some(dt) = self.tracks.get_mut(&stream_id) {
+            dt.push(down_track)
+        } else {
+            self.tracks.insert(stream_id, Vec::new());
+        }
+    }
+
+    fn remove_down_track(&mut self, stream_id: String, down_track: DownTrack) {
+        if let Some(dts) = self.tracks.get_mut(&stream_id) {
+            let mut idx: i16 = -1;
+
+            for (i, val) in dts.iter_mut().enumerate() {
+                if val.id == down_track.id {
+                    idx = i as i16;
+                }
+            }
+
+            if idx >= 0 {
+                dts.remove(idx as usize);
+            }
+        }
+    }
+
+    async fn add_data_channel_by_label(&mut self, label: String) -> Result<Arc<RTCDataChannel>> {
+        if let Some(channel) = self.channels.get(&label) {
+            return Ok(channel.clone());
+        }
+
+        let channel = self
+            .pc
+            .create_data_channel(&label, Some(RTCDataChannelInit::default()))
+            .await?;
+        self.channels.insert(label, channel.clone());
+        Ok(channel)
     }
 
     async fn on_ice_connection_state_change(&self) {
@@ -190,34 +325,51 @@ impl Subscriber {
     }
 
     async fn close(&mut self) -> Result<()> {
-        match self.pc.close().await {
-            Err(error) => {
-                return Err(Error::ErrWebRTC(error));
-            }
-            Ok(()) => return Ok(()),
-        }
-    }
-
-    pub async fn on_negotiate(&mut self, f: OnNegotiateFn) {
-        let mut handler = self.on_negotiate_handler.lock().await;
-        *handler = Some(f);
-    }
-
-    async fn add_data_channel(
-        &mut self,
-        peer: Arc<dyn Peer + Send + Sync>,
-        dc: RTCDataChannel,
-    ) -> Result<()> {
-        self.pc
-            .create_data_channel(dc.label(), Some(RTCDataChannelInit::default()))
-            .await?;
+        self.pc.close().await.map_err(anyhow::Error::msg)?;
         Ok(())
     }
 
-    pub fn data_channel(&self, label: String) -> Option<Arc<RTCDataChannel>> {
-        if let Some(rtc_data_channel) = self.channels.get(&label) {
-            return rtc_data_channel.clone();
+    pub async fn set_remote_description(&mut self, desc: RTCSessionDescription) -> Result<()> {
+        self.pc.set_remote_description(desc).await?;
+
+        for candidate in &self.candidates {
+            self.pc.add_ice_candidate(candidate.clone()).await?;
         }
-        None
+
+        self.candidates.clear();
+
+        Ok(())
+    }
+
+    pub fn register_data_channel(&mut self, label: String, dc: Arc<RTCDataChannel>) {
+        self.channels.insert(label, dc);
+    }
+
+    pub fn get_data_channel(&self, label: String) -> Option<Arc<RTCDataChannel>> {
+        self.data_channel(label)
+    }
+
+    fn downtracks(&mut self) -> Vec<Arc<DownTrack>> {
+        let mut downtracks: Vec<Arc<DownTrack>> = Vec::new();
+        for (_, v) in &mut self.tracks {
+            downtracks.append(v);
+        }
+
+        downtracks
+    }
+
+    fn get_downtracks(&self, stream_id: String) -> Option<Vec<Arc<DownTrack>>> {
+        if let Some(val) = self.tracks.get(&stream_id) {
+            Some(val.clone())
+        } else {
+            None
+        }
+    }
+
+    async fn negotiate(&self) {
+        let mut handler = self.on_negotiate_handler.lock().await;
+        if let Some(f) = &mut *handler {
+            f().await;
+        }
     }
 }
