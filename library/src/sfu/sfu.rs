@@ -77,7 +77,7 @@ struct Config {
 
 #[derive(Default)]
 struct SFU {
-    webrtc: Arc<Mutex<WebRTCTransportConfig>>,
+    webrtc: Arc<WebRTCTransportConfig>,
     turn: Option<TurnServer>,
     sessions: HashMap<String, Arc<Mutex<dyn Session + Send + Sync>>>,
     data_channels: Vec<DataChannel>,
@@ -225,7 +225,7 @@ impl SessionProvider for SFU {
         sid: String,
     ) -> (
         Option<Arc<Mutex<dyn Session + Send + Sync>>>,
-        Arc<Mutex<WebRTCTransportConfig>>,
+        Arc<WebRTCTransportConfig>,
     ) {
         let s = self.sessions.get(&sid);
         match s {

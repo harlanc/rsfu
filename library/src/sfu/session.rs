@@ -50,7 +50,7 @@ pub trait Session {
     fn audio_obserber(&mut self) -> Option<&mut AudioObserver>;
 
     fn add_data_channel(&mut self, owner: String, dc: Arc<RTCDataChannel>);
-    fn get_data_channel_middlewares(&self) -> Vec<Arc<DataChannel>>;
+    fn get_data_channel_middlewares(&self) -> Vec<Arc<Mutex<DataChannel>>>;
     fn get_fanout_data_channel_labels(&self) -> Vec<String>;
     async fn get_data_channels(&self, peer_id: String, label: String) -> Vec<Arc<RTCDataChannel>>;
     async fn fanout_message(&self, origin: String, label: String, msg: DataChannelMessage);
@@ -68,7 +68,7 @@ pub struct SessionLocal {
     closed: AtomicBool,
     audio_observer: Option<AudioObserver>,
     fanout_data_channels: Vec<String>,
-    data_channels: Vec<Arc<DataChannel>>,
+    data_channels: Vec<Arc<Mutex<DataChannel>>>,
     on_close_handler: Arc<Mutex<Option<OnCloseFn>>>,
 }
 
@@ -171,7 +171,7 @@ impl Session for SessionLocal {
         self.audio_observer.as_mut()
     }
 
-    fn get_data_channel_middlewares(&self) -> Vec<Arc<DataChannel>> {
+    fn get_data_channel_middlewares(&self) -> Vec<Arc<Mutex<DataChannel>>> {
         self.data_channels.clone()
     }
 

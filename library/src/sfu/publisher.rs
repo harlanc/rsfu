@@ -99,11 +99,10 @@ impl Publisher {
     pub async fn new(
         id: String,
         session: Arc<Mutex<dyn Session + Send + Sync>>,
-        transport_cfg: Arc<Mutex<WebRTCTransportConfig>>,
+        cfg: WebRTCTransportConfig,
     ) -> Result<Self> {
         let me = media_engine::get_publisher_media_engine().await?;
 
-        let cfg = transport_cfg.lock().await;
         let setting_engine = cfg.setting.clone();
 
         let api = APIBuilder::new()

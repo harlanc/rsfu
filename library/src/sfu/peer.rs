@@ -2,6 +2,7 @@ use super::publisher::Publisher;
 use super::sfu::WebRTCTransportConfig;
 use super::subscriber::{self, Subscriber};
 use super::{publisher::PublisherTrack, session::Session};
+use crate::buffer::factory::AtomicFactory;
 use bytes::Bytes;
 use std::future::Future;
 use std::pin::Pin;
@@ -12,6 +13,7 @@ use uuid::Uuid;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
+use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
 use super::errors::Error;
@@ -110,8 +112,8 @@ impl PeerLocal {
         }
     }
 
-    async fn join(&mut self, sid: String, uid: String, cfg: JoinConfig) -> Result<()> {
-        if self.session.is_none() {
+    async fn join(self: Arc<Mutex<Self>>, sid: String, uid: String, cfg: JoinConfig) -> Result<()> {
+        if !this.session.is_none() {
             return Err(Error::ErrTransportExists.into());
         }
 
@@ -123,6 +125,18 @@ impl PeerLocal {
         self.id = uuid;
 
         let (s, webrtc_transport_cfg) = self.provider.lock().await.get_session(sid);
+
+        let rtc_config_clone = RTCConfiguration {
+            ice_servers: webrtc_transport_cfg.configuration.ice_servers.clone(),
+            ..Default::default()
+        };
+
+        let config_clone = WebRTCTransportConfig {
+            configuration: rtc_config_clone,
+            setting: webrtc_transport_cfg.setting.clone(),
+            Router: webrtc_transport_cfg.Router.clone(),
+            factory: Arc::new(Mutex::new(AtomicFactory::new(1000, 1000))),
+        };
 
         self.session = s;
 
@@ -199,14 +213,20 @@ impl PeerLocal {
         }
 
         if !cfg.no_publish {
-            let publisher = Arc::new(Mutex::new(
-                Publisher::new(
-                    self.id.clone(),
-                    self.session.clone().unwrap(),
-                    webrtc_transport_cfg.clone(),
-                )
-                .await?,
-            ));
+            let publisher = Publisher::new(
+                self.id.clone(),
+                self.session.as_ref().unwrap().clone(),
+                config_clone,
+            )
+            .await?;
+
+            if !cfg.no_subscribe {
+                let session = self.session.as_ref().unwrap().lock().await;
+                for dc in session.get_data_channel_middlewares() {
+                    let subscriber = self.subscriber.unwrap().lock().await;
+                    subscriber.add_data_channel(self.clone(), dc).await?;
+                }
+            }
         }
 
         Ok(())
