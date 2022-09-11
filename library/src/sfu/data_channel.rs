@@ -5,6 +5,9 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use webrtc::data_channel::data_channel_message::DataChannelMessage;
 
+use tokio::sync::Mutex as TokioMutex;
+
+use super::down_track::DownTrack;
 use webrtc::data_channel::RTCDataChannel;
 
 use std::rc::Rc;
@@ -14,7 +17,7 @@ pub type MessageProcessorFunc = Box<
 >;
 
 pub struct ProcessArgs {
-    pub peer: Arc<dyn Peer + Send + Sync>,
+    pub down_tracks: Vec<Arc<TokioMutex<DownTrack>>>,
     pub message: DataChannelMessage,
     pub data_channel: Arc<RTCDataChannel>,
 }

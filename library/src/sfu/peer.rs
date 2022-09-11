@@ -50,6 +50,8 @@ pub trait Peer {
     fn subscriber(&self) -> Option<Arc<Mutex<Subscriber>>>;
     // fn close() -> Result<()>;
     // fn send_data_channel_message(label: String, msg: Bytes) -> Result<()>;
+
+    fn as_peer(&self) -> &(dyn Peer + Send + Sync);
 }
 
 struct JoinConfig {
@@ -93,6 +95,24 @@ struct PeerLocal {
     negotiation_pending: Arc<AtomicBool>,
 }
 
+impl Peer for PeerLocal {
+    fn id(&self) -> String {
+        self.id.clone()
+    }
+
+    fn session(&self) -> Option<Arc<Mutex<dyn Session + Send + Sync>>> {
+        self.session.clone()
+    }
+
+    fn subscriber(&self) -> Option<Arc<Mutex<Subscriber>>> {
+        self.subscriber.clone()
+    }
+
+    fn as_peer(&self) -> &(dyn Peer + Send + Sync) {
+        self as &(dyn Peer + Send + Sync)
+    }
+}
+
 impl PeerLocal {
     fn new(provider: Arc<Mutex<dyn SessionProvider + Send + Sync>>) -> Self {
         PeerLocal {
@@ -112,8 +132,8 @@ impl PeerLocal {
         }
     }
 
-    async fn join(self: Arc<Mutex<Self>>, sid: String, uid: String, cfg: JoinConfig) -> Result<()> {
-        if !this.session.is_none() {
+    async fn join(&mut self, sid: String, uid: String, cfg: JoinConfig) -> Result<()> {
+        if !self.session.is_none() {
             return Err(Error::ErrTransportExists.into());
         }
 
@@ -223,26 +243,14 @@ impl PeerLocal {
             if !cfg.no_subscribe {
                 let session = self.session.as_ref().unwrap().lock().await;
                 for dc in session.get_data_channel_middlewares() {
-                    let subscriber = self.subscriber.unwrap().lock().await;
-                    subscriber.add_data_channel(self.clone(), dc).await?;
+                    if let Some(subscriber) = &self.subscriber {
+                        subscriber.lock().await.add_data_channel(dc).await?;
+                    }
+                    // let subscriber = self.subscriber.unwrap().lock().await;
                 }
             }
         }
 
         Ok(())
-    }
-}
-
-impl Peer for PeerLocal {
-    fn id(&self) -> String {
-        self.id.clone()
-    }
-
-    fn session(&self) -> Option<Arc<Mutex<dyn Session + Send + Sync>>> {
-        self.session.clone()
-    }
-
-    fn subscriber(&self) -> Option<Arc<Mutex<Subscriber>>> {
-        self.subscriber.clone()
     }
 }

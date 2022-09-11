@@ -181,7 +181,7 @@ impl DownTrack {
         self.enabled.load(Ordering::Relaxed)
     }
 
-    fn mute(&mut self, val: bool) {
+    pub fn mute(&mut self, val: bool) {
         if self.enabled() != val {
             return;
         }
@@ -213,11 +213,7 @@ impl DownTrack {
         self.current_spatial_layer.load(Ordering::Relaxed)
     }
 
-    async fn switch_spatial_layer(
-        self: &Arc<Self>,
-        target_layer: i32,
-        set_as_max: bool,
-    ) -> Result<()> {
+    pub async fn switch_spatial_layer(&self, target_layer: i32, set_as_max: bool) -> Result<()> {
         match self.track_type {
             DownTrackType::SimulcastDownTrack => {
                 let csl = self.current_spatial_layer.load(Ordering::Relaxed);
@@ -225,7 +221,7 @@ impl DownTrack {
                     return Err(WEBRTCError::new(String::from("error spatial layer busy..")));
                 }
                 let receiver = self.receiver.lock().await;
-                match receiver.switch_down_track(Arc::downgrade(self), target_layer as u8) {
+                match receiver.switch_down_track(self, target_layer as u8) {
                     Ok(_) => {
                         self.target_spatial_layer
                             .store(target_layer, Ordering::Relaxed);
@@ -296,7 +292,7 @@ impl DownTrack {
         )))
     }
 
-    fn switch_temporal_layer(self: &Arc<Self>, target_layer: i32, set_as_max: bool) {
+    pub fn switch_temporal_layer(&self, target_layer: i32, set_as_max: bool) {
         match self.track_type {
             DownTrackType::SimulcastDownTrack => {
                 let layer = self.temporal_layer.load(Ordering::Relaxed);

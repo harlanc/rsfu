@@ -49,7 +49,7 @@ pub struct Subscriber {
     pc: Arc<RTCPeerConnection>,
     me: MediaEngine,
 
-    tracks: HashMap<String, Vec<Arc<DownTrack>>>,
+    tracks: HashMap<String, Vec<Arc<Mutex<DownTrack>>>>,
     channels: HashMap<String, Arc<RTCDataChannel>>,
     candidates: Vec<RTCIceCandidateInit>,
     on_negotiate_handler: Arc<Mutex<Option<OnNegotiateFn>>>,
@@ -93,7 +93,7 @@ impl Subscriber {
 
     pub async fn add_data_channel(
         &mut self,
-        peer: Arc<dyn Peer + Send + Sync>,
+        // subscriber: Arc<Mutex<Subscriber>>,
         dc: Arc<Mutex<DataChannel>>,
     ) -> Result<()> {
         let ndc = self
@@ -120,20 +120,20 @@ impl Subscriber {
         )))));
 
         let ndc_out = ndc.clone();
-        let peer_out = peer.clone();
+        // let subscriber_out = self.clone();
 
         ndc.on_message(Box::new(move |msg: DataChannelMessage| {
             let p_in = Arc::clone(&p);
             let ndc_in = ndc_out.clone();
-            let peer_in = peer_out.clone();
+            // let subscriber_in = subscriber_out.clone();
             Box::pin(async move {
                 let mut f = p_in.lock().unwrap();
 
-                f.process(ProcessArgs {
-                    peer: peer_in,
-                    message: msg,
-                    data_channel: ndc_in,
-                })
+                // f.process(ProcessArgs {
+                //     down_tracks: self.get_downtracks(stream_id),
+                //     message: msg,
+                //     data_channel: ndc_in,
+                // })
             })
         }))
         .await;
@@ -177,7 +177,7 @@ impl Subscriber {
         Ok(())
     }
 
-    fn add_down_track(&mut self, stream_id: String, down_track: Arc<DownTrack>) {
+    fn add_down_track(&mut self, stream_id: String, down_track: Arc<Mutex<DownTrack>>) {
         if let Some(dt) = self.tracks.get_mut(&stream_id) {
             dt.push(down_track)
         } else {
@@ -185,12 +185,13 @@ impl Subscriber {
         }
     }
 
-    fn remove_down_track(&mut self, stream_id: String, down_track: DownTrack) {
+    async fn remove_down_track(&mut self, stream_id: String, down_track: DownTrack) {
         if let Some(dts) = self.tracks.get_mut(&stream_id) {
             let mut idx: i16 = -1;
 
             for (i, val) in dts.iter_mut().enumerate() {
-                if val.id == down_track.id {
+                let v = val.lock().await;
+                if v.id == down_track.id {
                     idx = i as i16;
                 }
             }
@@ -247,15 +248,16 @@ impl Subscriber {
 
             for dts in &self.tracks {
                 for dt in dts.1 {
-                    if dt.bound.load(Ordering::Relaxed) {
+                    let dt_val = dt.lock().await;
+                    if dt_val.bound.load(Ordering::Relaxed) {
                         continue;
                     }
 
-                    if let Some(sr) = dt.create_sender_report().await {
+                    if let Some(sr) = dt_val.create_sender_report().await {
                         rtcp_packets.push(Box::new(sr));
                     }
 
-                    if let Some(sd) = dt.create_source_description_chunks().await {
+                    if let Some(sd) = dt_val.create_source_description_chunks().await {
                         sds.append(&mut sd.clone());
                     }
                 }
@@ -291,7 +293,8 @@ impl Subscriber {
         let mut rtcp_packets: Vec<Box<(dyn rtcp::packet::Packet + Send + Sync + 'static)>> = vec![];
 
         if let Some(dts) = self.tracks.get(&stream_id) {
-            for dt in dts {
+            for dt_val in dts {
+                let dt = dt_val.lock().await;
                 if !dt.bound.load(Ordering::Relaxed) {
                     continue;
                 }
@@ -349,8 +352,8 @@ impl Subscriber {
         self.data_channel(label)
     }
 
-    fn downtracks(&mut self) -> Vec<Arc<DownTrack>> {
-        let mut downtracks: Vec<Arc<DownTrack>> = Vec::new();
+    fn downtracks(&mut self) -> Vec<Arc<Mutex<DownTrack>>> {
+        let mut downtracks: Vec<Arc<Mutex<DownTrack>>> = Vec::new();
         for (_, v) in &mut self.tracks {
             downtracks.append(v);
         }
@@ -358,7 +361,7 @@ impl Subscriber {
         downtracks
     }
 
-    fn get_downtracks(&self, stream_id: String) -> Option<Vec<Arc<DownTrack>>> {
+    fn get_downtracks(&self, stream_id: String) -> Option<Vec<Arc<Mutex<DownTrack>>>> {
         if let Some(val) = self.tracks.get(&stream_id) {
             Some(val.clone())
         } else {
