@@ -17,21 +17,24 @@ const ACTIVE_LAYER_METHOD: &'static str = "activeLayer";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetRemoteMedia {
     #[serde(rename = "streamId")]
-    stream_id: String,
+    pub stream_id: String,
     #[serde(rename = "video")]
-    video: String,
+    pub video: String,
     #[serde(rename = "frameRate")]
-    frame_rate: String,
+    pub frame_rate: String,
     #[serde(rename = "audio")]
-    audio: bool,
+    pub audio: bool,
     #[serde(rename = "layers", skip_serializing_if = "Option::is_none")]
-    layers: Option<Vec<String>>,
+    pub layers: Option<Vec<String>>,
 }
 
 fn subscriber_api(
     next: Arc<Mutex<dyn MessageProcessor + Send>>,
 ) -> Arc<Mutex<dyn MessageProcessor + Send>> {
     let f = ProcessFunc::new(Box::new(move |args: ProcessArgs| {
+        let next_in = next.clone();
+        let args_clone = args.clone();
+
         Box::pin(async move {
             let data = String::from_utf8(args.message.data.to_vec()).unwrap();
             let set_remote_media = serde_json::from_str::<SetRemoteMedia>(&data).unwrap();
@@ -80,10 +83,9 @@ fn subscriber_api(
                     }
                 }
             }
+            let mut n = next_in.lock().unwrap();
+            n.process(args_clone);
         })
-
-      let n =  next.lock().unwrap();
-      n.process(args);
     }));
 
     Arc::new(Mutex::new(f))

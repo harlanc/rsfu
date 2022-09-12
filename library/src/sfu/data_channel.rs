@@ -16,6 +16,8 @@ pub type MessageProcessorFunc = Box<
     dyn (FnMut(ProcessArgs) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>) + Send + Sync,
 >;
 
+#[derive(Default, Clone)]
+
 pub struct ProcessArgs {
     pub down_tracks: Vec<Arc<TokioMutex<DownTrack>>>,
     pub message: DataChannelMessage,

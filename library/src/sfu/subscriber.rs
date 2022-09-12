@@ -11,13 +11,16 @@ use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
+use webrtc::track::track_local::TrackLocal;
 
 use webrtc::ice_transport::ice_gatherer::OnLocalCandidateHdlrFn;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::rtcp::source_description::SourceDescription;
+use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
 
 use super::peer::Peer;
+use crate::middlewares::middlewares::SetRemoteMedia;
 use std::future::Future;
 use std::io::Write;
 use std::pin::Pin;
@@ -49,7 +52,7 @@ pub struct Subscriber {
     pc: Arc<RTCPeerConnection>,
     me: MediaEngine,
 
-    tracks: HashMap<String, Vec<Arc<Mutex<DownTrack>>>>,
+    tracks: Arc<Mutex<HashMap<String, Vec<Arc<Mutex<DownTrack>>>>>>,
     channels: HashMap<String, Arc<RTCDataChannel>>,
     candidates: Vec<RTCIceCandidateInit>,
     on_negotiate_handler: Arc<Mutex<Option<OnNegotiateFn>>>,
@@ -79,7 +82,7 @@ impl Subscriber {
             id,
             pc: Arc::new(pc),
             me: media_engine::get_subscriber_media_engine()?,
-            tracks: HashMap::new(),
+            tracks: Arc::new(Mutex::new(HashMap::new())),
             channels: HashMap::new(),
             candidates: Vec::new(),
             on_negotiate_handler: Arc::new(Mutex::new(None)),
@@ -105,35 +108,38 @@ impl Subscriber {
             .await?;
 
         let dc_out = dc.clone();
-        let mws = Middlewares::new(dc.lock().await.middlewares.clone());
+        //let mws = Middlewares::new(dc.lock().await.middlewares.clone());
 
-        let p = mws.process(Arc::new(SyncMutex::new(ProcessFunc::new(Box::new(
-            move |args: ProcessArgs| {
-                let dc_in = Arc::clone(&dc_out);
-                Box::pin(async move {
-                    let f = dc_in.lock().await;
-                    if let Some(on_message) = f.on_message {
-                        on_message(args);
-                    }
-                })
-            },
-        )))));
+        // let p = mws.process(Arc::new(SyncMutex::new(ProcessFunc::new(Box::new(
+        //     move |args: ProcessArgs| {
+        //         let dc_in = Arc::clone(&dc_out);
+        //         Box::pin(async move {
+        //             let f = dc_in.lock().await;
+        //             if let Some(on_message) = f.on_message {
+        //                 on_message(args);
+        //             }
+        //         })
+        //     },
+        // )))));
 
         let ndc_out = ndc.clone();
         // let subscriber_out = self.clone();
 
-        ndc.on_message(Box::new(move |msg: DataChannelMessage| {
-            let p_in = Arc::clone(&p);
-            let ndc_in = ndc_out.clone();
-            // let subscriber_in = subscriber_out.clone();
-            Box::pin(async move {
-                let mut f = p_in.lock().unwrap();
+        let tracks_out = self.tracks.clone();
 
-                // f.process(ProcessArgs {
-                //     down_tracks: self.get_downtracks(stream_id),
-                //     message: msg,
-                //     data_channel: ndc_in,
-                // })
+        ndc.on_message(Box::new(move |msg: DataChannelMessage| {
+            //let p_in = Arc::clone(&p);
+            let ndc_in = ndc_out.clone();
+
+            let data = String::from_utf8(msg.data.to_vec()).unwrap();
+            let set_remote_media = serde_json::from_str::<SetRemoteMedia>(&data).unwrap();
+
+            let tracks_in = tracks_out.clone();
+
+            Box::pin(async move {
+                if let Some(tracks) = tracks_in.lock().await.get(&set_remote_media.stream_id) {
+                    process(msg, tracks.clone()).await;
+                }
             })
         }))
         .await;
@@ -177,16 +183,16 @@ impl Subscriber {
         Ok(())
     }
 
-    fn add_down_track(&mut self, stream_id: String, down_track: Arc<Mutex<DownTrack>>) {
-        if let Some(dt) = self.tracks.get_mut(&stream_id) {
+    async fn add_down_track(&mut self, stream_id: String, down_track: Arc<Mutex<DownTrack>>) {
+        if let Some(dt) = self.tracks.lock().await.get_mut(&stream_id) {
             dt.push(down_track)
         } else {
-            self.tracks.insert(stream_id, Vec::new());
+            self.tracks.lock().await.insert(stream_id, Vec::new());
         }
     }
 
     async fn remove_down_track(&mut self, stream_id: String, down_track: DownTrack) {
-        if let Some(dts) = self.tracks.get_mut(&stream_id) {
+        if let Some(dts) = self.tracks.lock().await.get_mut(&stream_id) {
             let mut idx: i16 = -1;
 
             for (i, val) in dts.iter_mut().enumerate() {
@@ -246,7 +252,7 @@ impl Subscriber {
 
             let mut sds = Vec::new();
 
-            for dts in &self.tracks {
+            for dts in &*self.tracks.lock().await {
                 for dt in dts.1 {
                     let dt_val = dt.lock().await;
                     if dt_val.bound.load(Ordering::Relaxed) {
@@ -292,7 +298,7 @@ impl Subscriber {
         let mut sds = Vec::new();
         let mut rtcp_packets: Vec<Box<(dyn rtcp::packet::Packet + Send + Sync + 'static)>> = vec![];
 
-        if let Some(dts) = self.tracks.get(&stream_id) {
+        if let Some(dts) = self.tracks.lock().await.get(&stream_id) {
             for dt_val in dts {
                 let dt = dt_val.lock().await;
                 if !dt.bound.load(Ordering::Relaxed) {
@@ -352,17 +358,17 @@ impl Subscriber {
         self.data_channel(label)
     }
 
-    fn downtracks(&mut self) -> Vec<Arc<Mutex<DownTrack>>> {
+    async fn downtracks(&mut self) -> Vec<Arc<Mutex<DownTrack>>> {
         let mut downtracks: Vec<Arc<Mutex<DownTrack>>> = Vec::new();
-        for (_, v) in &mut self.tracks {
+        for (_, v) in &mut *self.tracks.lock().await {
             downtracks.append(v);
         }
 
         downtracks
     }
 
-    fn get_downtracks(&self, stream_id: String) -> Option<Vec<Arc<Mutex<DownTrack>>>> {
-        if let Some(val) = self.tracks.get(&stream_id) {
+    async fn get_downtracks(&self, stream_id: String) -> Option<Vec<Arc<Mutex<DownTrack>>>> {
+        if let Some(val) = self.tracks.lock().await.get(&stream_id) {
             Some(val.clone())
         } else {
             None
@@ -373,6 +379,61 @@ impl Subscriber {
         let mut handler = self.on_negotiate_handler.lock().await;
         if let Some(f) = &mut *handler {
             f().await;
+        }
+    }
+}
+
+async fn process(msg: DataChannelMessage, down_tracks: Vec<Arc<Mutex<DownTrack>>>) {
+    let data = String::from_utf8(msg.data.to_vec()).unwrap();
+    let set_remote_media = serde_json::from_str::<SetRemoteMedia>(&data).unwrap();
+
+    // let down_tracks = self
+    //     .get_downtracks(set_remote_media.stream_id)
+    //     .clone()
+    //     .unwrap();
+
+    if !set_remote_media.layers.is_none() && set_remote_media.layers.unwrap().len() > 0 {
+    } else {
+        for dt in down_tracks {
+            let mut dt_val = dt.lock().await;
+            match dt_val.kind() {
+                RTPCodecType::Audio => dt_val.mute(!set_remote_media.audio),
+                RTPCodecType::Video => {
+                    match set_remote_media.video.as_str() {
+                        HIGH_VALUE => {
+                            dt_val.mute(false);
+                            dt_val.switch_spatial_layer(2, true).await;
+                        }
+                        MEDIA_VALUE => {
+                            dt_val.mute(false);
+                            dt_val.switch_spatial_layer(1, true).await;
+                        }
+                        LOW_VALUE => {
+                            dt_val.mute(false);
+                            dt_val.switch_spatial_layer(0, true).await;
+                        }
+                        MUTED_VALUE => {
+                            dt_val.mute(true);
+                        }
+                        _ => {}
+                    }
+
+                    match set_remote_media.frame_rate.as_str() {
+                        HIGH_VALUE => {
+                            dt_val.switch_temporal_layer(2, true);
+                        }
+                        MEDIA_VALUE => {
+                            dt_val.switch_temporal_layer(1, true);
+                        }
+                        LOW_VALUE => {
+                            dt_val.switch_temporal_layer(0, true);
+                        }
+                        _ => {}
+                    }
+                }
+
+                RTPCodecType::Unspecified => {}
+            }
         }
     }
 }
