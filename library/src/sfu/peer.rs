@@ -32,7 +32,7 @@ pub type OnOfferFn = Box<
 >;
 
 pub type OnIceCandidateFn = Box<
-    dyn (FnMut(RTCIceCandidateInit) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>)
+    dyn (FnMut(RTCIceCandidateInit, u8) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>)
         + Send
         + Sync,
 >;
@@ -221,7 +221,7 @@ impl PeerLocal {
                         if let Some(on_ice_candidate) = &mut *on_ice_candidate_in.lock().await {
                             if !closed_in.load(Ordering::Relaxed) {
                                 if let Ok(val) = candidate.unwrap().to_json().await {
-                                    on_ice_candidate(val).await;
+                                    on_ice_candidate(val, SUBSCRIBER).await;
                                 }
                             }
                         }
@@ -233,7 +233,7 @@ impl PeerLocal {
         }
 
         if !cfg.no_publish {
-            let publisher = Publisher::new(
+            let mut publisher = Publisher::new(
                 self.id.clone(),
                 self.session.as_ref().unwrap().clone(),
                 config_clone,
@@ -249,6 +249,55 @@ impl PeerLocal {
                     // let subscriber = self.subscriber.unwrap().lock().await;
                 }
             }
+
+            let on_ice_candidate_out = self.on_ice_candidate.clone();
+            let closed_out_1 = self.closed.clone();
+
+            publisher
+                .on_ice_candidate(Box::new(move |candidate: Option<RTCIceCandidate>| {
+                    let on_ice_candidate_in = on_ice_candidate_out.clone();
+                    let closed_in = closed_out_1.clone();
+                    Box::pin(async move {
+                        if candidate.is_none() {
+                            return;
+                        }
+
+                        if let Some(on_ice_candidate) = &mut *on_ice_candidate_in.lock().await {
+                            if !closed_in.load(Ordering::Relaxed) {
+                                if let Ok(val) = candidate.unwrap().to_json().await {
+                                    on_ice_candidate(val, PUBLISHER).await;
+                                }
+                            }
+                        }
+                    })
+                }))
+                .await;
+
+            let on_ice_connection_state_change_out = self.on_ice_connection_state_change.clone();
+            let closed_out_2 = self.closed.clone();
+            publisher
+                .on_ice_connection_state_change(Box::new(move |state: RTCIceConnectionState| {
+                    let on_ice_connection_state_change_in =
+                        on_ice_connection_state_change_out.clone();
+                    let closed_in = closed_out_2.clone();
+
+                    Box::pin(async move {
+                        if let Some(on_ice_connection_state_change) =
+                            &mut *on_ice_connection_state_change_in.lock().await
+                        {
+                            if !closed_in.load(Ordering::Relaxed) {
+                                on_ice_connection_state_change(state).await;
+                            }
+                        }
+                    })
+                }))
+                .await;
+
+            self.publisher = Some(Arc::new(Mutex::new(publisher)));
+        }
+
+        if let Some(session) = self.session {
+            session.lock().await.add_peer(Arc::new(self));
         }
 
         Ok(())

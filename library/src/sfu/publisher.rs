@@ -39,8 +39,11 @@ use webrtc::track::track_remote::TrackRemote;
 use super::down_track::DownTrack;
 use crate::buffer::factory::AtomicFactory;
 
-pub type OnIceConnectionStateChange =
-    Box<dyn (FnMut() -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>) + Send + Sync>;
+pub type OnIceConnectionStateChange = Box<
+    dyn (FnMut(RTCIceConnectionState) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>)
+        + Send
+        + Sync,
+>;
 
 pub type OnPublisherTrack =
     Box<dyn (FnMut() -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>) + Send + Sync>;
@@ -300,11 +303,11 @@ impl Publisher {
         *handler = Some(f);
     }
 
-    async fn on_ice_candidate(&mut self, f: OnLocalCandidateHdlrFn) {
+    pub async fn on_ice_candidate(&mut self, f: OnLocalCandidateHdlrFn) {
         self.pc.on_ice_candidate(f).await;
     }
 
-    async fn on_ice_connection_state_change(&mut self, f: OnIceConnectionStateChange) {
+    pub async fn on_ice_connection_state_change(&mut self, f: OnIceConnectionStateChange) {
         let mut handler = self.on_ice_connection_state_change_hander.lock().await;
         *handler = Some(f);
     }
