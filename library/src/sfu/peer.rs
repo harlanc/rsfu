@@ -3,6 +3,7 @@ use super::sfu::WebRTCTransportConfig;
 use super::subscriber::{self, Subscriber};
 use super::{publisher::PublisherTrack, session::Session};
 use crate::buffer::factory::AtomicFactory;
+use async_trait::async_trait;
 use bytes::Bytes;
 use std::future::Future;
 use std::pin::Pin;
@@ -43,6 +44,7 @@ pub type OnIceConnectionStateChangeFn = Box<
         + Sync,
 >;
 
+#[async_trait]
 pub trait Peer {
     fn id(&self) -> String;
     fn session(&self) -> Option<Arc<Mutex<dyn Session + Send + Sync>>>;
@@ -51,7 +53,9 @@ pub trait Peer {
     // fn close() -> Result<()>;
     // fn send_data_channel_message(label: String, msg: Bytes) -> Result<()>;
 
-    fn as_peer(&self) -> &(dyn Peer + Send + Sync);
+    // async fn add_peer(self);
+
+    // fn as_peer(&self) -> &(dyn Peer + Send + Sync);
 }
 
 struct JoinConfig {
@@ -94,7 +98,7 @@ struct PeerLocal {
     remote_answer_pending: Arc<AtomicBool>,
     negotiation_pending: Arc<AtomicBool>,
 }
-
+#[async_trait]
 impl Peer for PeerLocal {
     fn id(&self) -> String {
         self.id.clone()
@@ -108,9 +112,9 @@ impl Peer for PeerLocal {
         self.subscriber.clone()
     }
 
-    fn as_peer(&self) -> &(dyn Peer + Send + Sync) {
-        self as &(dyn Peer + Send + Sync)
-    }
+    // fn as_peer(&self) -> &(dyn Peer + Send + Sync) {
+    //     self as &(dyn Peer + Send + Sync)
+    // }
 }
 
 impl PeerLocal {
@@ -129,6 +133,16 @@ impl PeerLocal {
 
             remote_answer_pending: Arc::new(AtomicBool::new(false)),
             negotiation_pending: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    async fn add_peer(self: &Arc<Self>) {
+        // let s = Arc::new(Box::new(self) as Box<dyn Peer + Send + Sync>);
+        if let Some(session) = &self.session {
+            session
+                .lock()
+                .await
+                .add_peer(Arc::clone(self as &Arc<dyn Peer + Send + Sync>));
         }
     }
 
@@ -296,9 +310,9 @@ impl PeerLocal {
             self.publisher = Some(Arc::new(Mutex::new(publisher)));
         }
 
-        if let Some(session) = self.session {
-            session.lock().await.add_peer(Arc::new(self));
-        }
+        // if let Some(session) = self.session {
+        //     session.lock().await.add_peer(Arc::new(self.as_peer()));
+        // }
 
         Ok(())
     }
