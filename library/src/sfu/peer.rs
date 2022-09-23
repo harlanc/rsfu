@@ -16,6 +16,7 @@ use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
+use webrtc::peer_connection::signaling_state::RTCSignalingState;
 
 use super::errors::Error;
 // use super::errors::Result;
@@ -117,10 +118,15 @@ impl Peer for PeerLocal {
     // }
 }
 
-fn NewPeer() -> (impl Peer + Send + Sync) {
-    let p = PeerLocal::new(Arc::new(Mutex::new(SProvider::new())));
+fn NewPeer() //-> (impl Peer + Send + Sync)
+{
+    //     let p = PeerLocal::new(Arc::new(Mutex::new(SProvider::new())));
 
-    p
+    //     p
+
+    let p = Arc::new(PeerLocal::new(Arc::new(Mutex::new(SProvider::new()))));
+
+    let a = Arc::clone(&p) as Arc<dyn Peer + Send + Sync>;
 }
 
 struct SProvider {}
@@ -162,10 +168,20 @@ impl PeerLocal {
         }
     }
 
-    async fn add_peer(self: &Arc<Self>) {
+    async fn join_after(self: &Arc<Self>) {
         // let s = Arc::new(Box::new(self) as Box<dyn Peer + Send + Sync>);
+
+        // let session = self.session.take();
         if let Some(session) = &self.session {
-            session.lock().await.add_peer(Arc::clone(self)); //as &Arc<dyn Peer + Send + Sync>));
+            session
+                .lock()
+                .await
+                .add_peer(Arc::clone(self) as Arc<dyn Peer + Send + Sync>); //as &Arc<dyn Peer + Send + Sync>));
+
+            session
+                .lock()
+                .await
+                .subscribe(Arc::clone(self) as Arc<dyn Peer + Send + Sync>);
         }
     }
 
@@ -333,10 +349,121 @@ impl PeerLocal {
             self.publisher = Some(Arc::new(Mutex::new(publisher)));
         }
 
-        // if let Some(session) = self.session {
-        //     session.lock().await.add_peer(Arc::new(self.as_peer()));
-        // }
+        Ok(())
+    }
+
+    async fn answer(&mut self, sdp: RTCSessionDescription) -> Result<RTCSessionDescription> {
+        if let Some(publisher) = &self.publisher {
+            if publisher.lock().await.signaling_state() != RTCSignalingState::Stable {
+                return Err(Error::ErrOfferIgnored.into());
+            }
+
+            publisher.lock().await.answer(sdp).await
+        } else {
+            return Err(Error::ErrNoTransportEstablished.into());
+        }
+    }
+
+    async fn set_remote_description(&mut self, sdp: RTCSessionDescription) -> Result<()> {
+        if let Some(subscriber) = &self.subscriber {
+            subscriber.lock().await.set_remote_description(sdp).await?;
+            self.remote_answer_pending.store(false, Ordering::Relaxed);
+
+            if self.negotiation_pending.load(Ordering::Relaxed) {
+                self.negotiation_pending.store(false, Ordering::Relaxed);
+                subscriber.lock().await.negotiate().await;
+            }
+        } else {
+            return Err(Error::ErrNoTransportEstablished.into());
+        }
 
         Ok(())
+    }
+
+    async fn trickle(&mut self, candidate: RTCIceCandidateInit, target: u8) -> Result<()> {
+        if self.subscriber.is_none() || self.publisher.is_none() {
+            return Err(Error::ErrNoTransportEstablished.into());
+        }
+
+        match target {
+            PUBLISHER => {
+                self.publisher
+                    .as_ref()
+                    .unwrap()
+                    .lock()
+                    .await
+                    .add_ice_candidata(candidate)
+                    .await?;
+            }
+            SUBSCRIBER => {
+                self.subscriber
+                    .as_ref()
+                    .unwrap()
+                    .lock()
+                    .await
+                    .add_ice_candidate(candidate)
+                    .await?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    async fn send_data_channel_message(&mut self, label: String, msg: String) -> Result<()> {
+        if self.subscriber.is_none() {
+            return Err(Error::ErrNoSubscriber.into());
+        }
+
+        let dc = self
+            .subscriber
+            .as_ref()
+            .unwrap()
+            .lock()
+            .await
+            .data_channel(label);
+
+        if dc.is_none() {
+            return Err(Error::ErrDataChannelNotExists.into());
+        }
+
+        dc.unwrap().send_text(msg).await?;
+
+        Ok(())
+    }
+
+    async fn close(self: &Arc<Self>) -> Result<()> {
+        if self.closed.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        self.closed.store(true, Ordering::Relaxed);
+
+        if let Some(session) = &self.session {
+            session
+                .lock()
+                .await
+                .remove_peer(Arc::clone(self) as Arc<dyn Peer + Send + Sync>)
+                .await;
+        }
+
+        if let Some(publisher) = &self.publisher {
+            publisher.lock().await.close().await;
+        }
+        if let Some(subscriber) = &self.subscriber {
+            subscriber.lock().await.close().await?;
+        }
+        Ok(())
+    }
+
+    fn subscriber(self) -> Option<Arc<Mutex<Subscriber>>> {
+        self.subscriber
+    }
+    fn publisher(self) -> Option<Arc<Mutex<Publisher>>> {
+        self.publisher
+    }
+    fn session(self) -> Option<Arc<Mutex<dyn Session + Send + Sync>>> {
+        self.session
+    }
+    fn id(self) -> String {
+        self.id
     }
 }

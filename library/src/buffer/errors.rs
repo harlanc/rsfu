@@ -1,5 +1,8 @@
 use thiserror::Error;
 
+use webrtc::Error as RTCError;
+pub type Result<T> = std::result::Result<T, Error>;
+
 #[derive(Error, Debug, PartialEq)]
 pub enum Error {
     #[error("packet not found in cache")]
@@ -10,12 +13,10 @@ pub enum Error {
     ErrPacketTooOld,
     #[error("packet already received")]
     ErrRTXPacket,
-
     #[error("packet is not large enough")]
     ErrShortPacket,
     #[error("invalid nil packet")]
     ErrNilPacket,
-
     #[error("io EOF")]
     ErrIOEof,
 }

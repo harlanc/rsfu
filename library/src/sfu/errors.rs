@@ -1,9 +1,6 @@
 use thiserror::Error;
-
 //use webrtc::error::Error as WebRTCErrorError;
-
-use webrtc::Error as WebRTCError;
-
+use webrtc::Error as RTCError;
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Error, Debug, PartialEq)]
@@ -21,7 +18,11 @@ pub enum Error {
     #[error("cannot get auth key from user map")]
     ErrTurnNoneAuthKey,
     #[error("webrtc error")]
-    ErrWebRTC(WebRTCError),
+    ErrWebRTC(RTCError),
+    #[error("no subscriber for this peer")]
+    ErrNoSubscriber,
+    #[error("data channel doesn't exist")]
+    ErrDataChannelNotExists,
     // #[error("webrtc error error")]
     // ErrWebRTCError(WebRTCErrorError),
 }
@@ -31,8 +32,8 @@ impl Error {
     }
 }
 
-impl From<WebRTCError> for Error {
-    fn from(error: WebRTCError) -> Self {
+impl From<RTCError> for Error {
+    fn from(error: RTCError) -> Self {
         Error::ErrWebRTC(error)
     }
 }

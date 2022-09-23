@@ -173,7 +173,7 @@ impl Subscriber {
         self.pc.on_ice_candidate(f).await
     }
 
-    async fn add_ice_candidate(&mut self, candidate: RTCIceCandidateInit) -> Result<()> {
+    pub async fn add_ice_candidate(&mut self, candidate: RTCIceCandidateInit) -> Result<()> {
         if let Some(descripton) = self.pc.remote_description().await {
             self.pc.add_ice_candidate(candidate).await?;
             return Ok(());
@@ -333,7 +333,7 @@ impl Subscriber {
         });
     }
 
-    async fn close(&mut self) -> Result<()> {
+    pub async fn close(&mut self) -> Result<()> {
         self.pc.close().await.map_err(anyhow::Error::msg)?;
         Ok(())
     }
@@ -375,7 +375,7 @@ impl Subscriber {
         }
     }
 
-    async fn negotiate(&self) {
+    pub async fn negotiate(&self) {
         let mut handler = self.on_negotiate_handler.lock().await;
         if let Some(f) = &mut *handler {
             f().await;

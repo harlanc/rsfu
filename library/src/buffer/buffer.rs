@@ -15,7 +15,7 @@ use webrtc::rtp_transceiver::rtp_codec::RTCRtpParameters;
 use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
 use webrtc_util::{Marshal, MarshalSize, Unmarshal};
 
-use anyhow::Result;
+use super::errors::Result;
 use std::borrow::BorrowMut;
 use std::collections::VecDeque;
 use std::isize::MAX;
@@ -393,7 +393,7 @@ impl Buffer {
         self.bound = true;
     }
 
-    async fn read_extended(&mut self) -> Result<ExtPacket> {
+    pub async fn read_extended(&mut self) -> Result<ExtPacket> {
         loop {
             if self.closed {
                 return Err(Error::ErrIOEof.into());

@@ -2,7 +2,7 @@ use std::io::Write;
 
 use crate::buffer::errors::*;
 
-use anyhow::Result;
+use super::errors::Result;
 use byteorder::{BigEndian, ByteOrder, WriteBytesExt};
 
 const MAX_PACKET_SIZE: usize = 1500;

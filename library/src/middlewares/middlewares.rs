@@ -36,55 +36,55 @@ fn subscriber_api(
         let args_clone = args.clone();
 
         Box::pin(async move {
-            let data = String::from_utf8(args.message.data.to_vec()).unwrap();
-            let set_remote_media = serde_json::from_str::<SetRemoteMedia>(&data).unwrap();
+            // let data = String::from_utf8(args.message.data.to_vec()).unwrap();
+            // let set_remote_media = serde_json::from_str::<SetRemoteMedia>(&data).unwrap();
 
-            if !set_remote_media.layers.is_none() && set_remote_media.layers.unwrap().len() > 0 {
-            } else {
-                for dt in args.down_tracks {
-                    let mut dt_val = dt.lock().await;
-                    match dt_val.kind() {
-                        RTPCodecType::Audio => dt_val.mute(!set_remote_media.audio),
-                        RTPCodecType::Video => {
-                            match set_remote_media.video.as_str() {
-                                HIGH_VALUE => {
-                                    dt_val.mute(false);
-                                    dt_val.switch_spatial_layer(2, true).await;
-                                }
-                                MEDIA_VALUE => {
-                                    dt_val.mute(false);
-                                    dt_val.switch_spatial_layer(1, true).await;
-                                }
-                                LOW_VALUE => {
-                                    dt_val.mute(false);
-                                    dt_val.switch_spatial_layer(0, true).await;
-                                }
-                                MUTED_VALUE => {
-                                    dt_val.mute(true);
-                                }
-                                _ => {}
-                            }
+            // if !set_remote_media.layers.is_none() && set_remote_media.layers.unwrap().len() > 0 {
+            // } else {
+            //     for dt in args.down_tracks {
+            //         let mut dt_val = dt.lock().await;
+            //         match dt_val.kind() {
+            //             RTPCodecType::Audio => dt_val.mute(!set_remote_media.audio),
+            //             RTPCodecType::Video => {
+            //                 match set_remote_media.video.as_str() {
+            //                     HIGH_VALUE => {
+            //                         dt_val.mute(false);
+            //                         dt_val.switch_spatial_layer(2, true).await;
+            //                     }
+            //                     MEDIA_VALUE => {
+            //                         dt_val.mute(false);
+            //                         dt_val.switch_spatial_layer(1, true).await;
+            //                     }
+            //                     LOW_VALUE => {
+            //                         dt_val.mute(false);
+            //                         dt_val.switch_spatial_layer(0, true).await;
+            //                     }
+            //                     MUTED_VALUE => {
+            //                         dt_val.mute(true);
+            //                     }
+            //                     _ => {}
+            //                 }
 
-                            match set_remote_media.frame_rate.as_str() {
-                                HIGH_VALUE => {
-                                    dt_val.switch_temporal_layer(2, true);
-                                }
-                                MEDIA_VALUE => {
-                                    dt_val.switch_temporal_layer(1, true);
-                                }
-                                LOW_VALUE => {
-                                    dt_val.switch_temporal_layer(0, true);
-                                }
-                                _ => {}
-                            }
-                        }
+            //                 match set_remote_media.frame_rate.as_str() {
+            //                     HIGH_VALUE => {
+            //                         dt_val.switch_temporal_layer(2, true);
+            //                     }
+            //                     MEDIA_VALUE => {
+            //                         dt_val.switch_temporal_layer(1, true);
+            //                     }
+            //                     LOW_VALUE => {
+            //                         dt_val.switch_temporal_layer(0, true);
+            //                     }
+            //                     _ => {}
+            //                 }
+            //             }
 
-                        RTPCodecType::Unspecified => {}
-                    }
-                }
-            }
-            let mut n = next_in.lock().unwrap();
-            n.process(args_clone);
+            //             RTPCodecType::Unspecified => {}
+            //         }
+            //     }
+            // }
+            // let mut n = next_in.lock().unwrap();
+            // n.process(args_clone);
         })
     }));
 

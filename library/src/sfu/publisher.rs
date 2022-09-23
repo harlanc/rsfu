@@ -266,7 +266,12 @@ impl Publisher {
                 Box::pin(async move {
                     match s {
                         RTCIceConnectionState::Failed | RTCIceConnectionState::Closed => {
-                            Publisher::close(relay_peer_in, router_in, peer_connection_in).await;
+                            Publisher::close_with_parameters(
+                                relay_peer_in,
+                                router_in,
+                                peer_connection_in,
+                            )
+                            .await;
                         }
 
                         _ => {}
@@ -281,7 +286,15 @@ impl Publisher {
             .set_peer_connection(self.pc.clone());
     }
 
-    async fn answer(&self, offer: RTCSessionDescription) -> Result<RTCSessionDescription> {
+    pub async fn close(&mut self) {
+        let peer_connection = self.pc.clone();
+        let router = self.router.clone();
+        let relay_peer = self.relay_peers.clone();
+
+        Publisher::close_with_parameters(relay_peer, router, peer_connection).await;
+    }
+
+    pub async fn answer(&self, offer: RTCSessionDescription) -> Result<RTCSessionDescription> {
         self.pc.set_remote_description(offer).await?;
 
         for c in &self.candidates {
@@ -312,7 +325,7 @@ impl Publisher {
         *handler = Some(f);
     }
 
-    fn signaling_state(&self) -> RTCSignalingState {
+    pub fn signaling_state(&self) -> RTCSignalingState {
         self.pc.signaling_state()
     }
 
@@ -382,7 +395,7 @@ impl Publisher {
         tracks
     }
 
-    async fn add_ice_candidata(&mut self, candidate: RTCIceCandidateInit) -> Result<()> {
+    pub async fn add_ice_candidata(&mut self, candidate: RTCIceCandidateInit) -> Result<()> {
         if let Some(desp) = self.pc.remote_description().await {
             self.pc.add_ice_candidate(candidate.clone()).await?;
         }
@@ -432,7 +445,7 @@ impl Publisher {
             ],
         };
 
-        let mut downtrack = DownTrack::new(c, receiver.clone(), peer_id, max_packet_track);
+        let downtrack = DownTrack::new(c, receiver.clone(), peer_id, max_packet_track);
 
         let downtrack_arc = Arc::new(downtrack);
 
@@ -494,10 +507,12 @@ impl Publisher {
 
             let sdr_out = sdr.clone();
 
-            // downtrack_arc.on_close_hander(Box::new(move || {
-            //     let sdr_in = sdr_out.clone();
-            //     Box::pin(async move { if let Err(_) = sdr_in.stop().await {} })
-            // }));
+            downtrack_arc
+                .on_close_handler(Box::new(move || {
+                    let sdr_in = sdr_out.clone();
+                    Box::pin(async move { if let Err(_) = sdr_in.stop().await {} })
+                }))
+                .await;
 
             receiver_mg.add_down_track(downtrack_arc, true);
         }
@@ -505,7 +520,7 @@ impl Publisher {
         Ok(())
     }
 
-    async fn close(
+    async fn close_with_parameters(
         relay_peers: Arc<Mutex<Vec<RelayPeer>>>,
         router: Arc<Mutex<dyn Router + Send + Sync>>,
         pc: Arc<RTCPeerConnection>,
