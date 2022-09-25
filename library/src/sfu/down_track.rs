@@ -96,6 +96,18 @@ pub struct DownTrack {
     max_packet_ts: u32,
 }
 
+impl PartialEq for DownTrack {
+    fn eq(&self, other: &Self) -> bool {
+        return (self.peer_id == other.peer_id)
+            && (self.stream_id == other.stream_id)
+            && (self.id == other.id);
+    }
+
+    // fn ne(&self, other: &Self) -> bool {
+    //     true
+    // }
+}
+
 impl DownTrack {
     pub(super) async fn new(
         c: RTCRtpCodecCapability,

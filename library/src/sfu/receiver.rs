@@ -358,9 +358,13 @@ impl WebRTCReceiver {
         }
     }
 
-    fn down_track_subscribed(&self, layer: usize, dt: DownTrack) -> bool {
-        // let down_tracks = self.down_tracks[layer].lock().await;
-        // for down_track in down_tracks {}
+    async fn down_track_subscribed(&self, layer: usize, dt: DownTrack) -> bool {
+        let down_tracks = self.down_tracks[layer].lock().await;
+        for down_track in &*down_tracks {
+            if *down_track.lock().await == dt {
+                return true;
+            }
+        }
 
         true
     }
