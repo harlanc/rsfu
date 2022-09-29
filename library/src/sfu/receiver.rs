@@ -11,13 +11,14 @@ use webrtc::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
 
 use crate::buffer::buffer::Buffer;
 use rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
-use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU32, Ordering};
 use webrtc::error::{Error, Result};
 
 use crate::stats::stream::Stream;
 use std::sync::Weak;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
+use super::down_track::DownTrackType;
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
@@ -37,7 +38,7 @@ pub trait Receiver: Send + Sync {
     fn ssrc(&self, layer: usize) -> u32;
     fn set_track_meta(&mut self, track_id: String, stream_id: String);
     async fn add_up_track(&mut self, track: TrackRemote, buffer: Buffer, best_quality_first: bool);
-    fn add_down_track(&mut self, track: Arc<DownTrack>, best_quality_first: bool);
+    async fn add_down_track(&mut self, track: Arc<DownTrack>, best_quality_first: bool);
     fn switch_down_track(&self, track: &DownTrack, layer: u8) -> Result<()>;
     fn get_bitrate(&self) -> Vec<u64>;
     fn get_max_temporal_layer(&self) -> Vec<i32>;
@@ -129,10 +130,10 @@ impl Receiver for WebRTCReceiver {
         self.stream_id.clone()
     }
     fn track_id(&self) -> String {
-        self.track_id
+        self.track_id.clone()
     }
     fn codec(&self) -> RTCRtpCodecParameters {
-        self.codec
+        self.codec.clone()
     }
     fn kind(&self) -> RTPCodecType {
         self.kind
@@ -216,7 +217,7 @@ impl Receiver for WebRTCReceiver {
 
         // tokio::spawn(async move { self.write_rtp(layer) });
     }
-    fn add_down_track(&mut self, track: Arc<DownTrack>, best_quality_first: bool) {
+    async fn add_down_track(&mut self, track: Arc<DownTrack>, best_quality_first: bool) {
         if self.closed.load(Ordering::Relaxed) {
             return;
         }
@@ -231,6 +232,15 @@ impl Receiver for WebRTCReceiver {
                     }
                 }
             }
+            if self.down_track_subscribed(layer, track).await {
+                return;
+            }
+            track.set_initial_layers(layer as i32, 2);
+            track.max_spatial_layer = AtomicI32::new(2);
+            track.max_temporal_layer = AtomicI32::new(2);
+            track.last_ssrc = AtomicU32::new(self.ssrc(layer));
+            track.track_type = DownTrackType::SimulcastDownTrack;
+            // track.payload =
 
             //  if self.dwo
         } else {
@@ -358,10 +368,10 @@ impl WebRTCReceiver {
         }
     }
 
-    async fn down_track_subscribed(&self, layer: usize, dt: DownTrack) -> bool {
+    async fn down_track_subscribed(&self, layer: usize, dt: Arc<Mutex<DownTrack>>) -> bool {
         let down_tracks = self.down_tracks[layer].lock().await;
         for down_track in &*down_tracks {
-            if *down_track.lock().await == dt {
+            if *down_track.lock().await == *dt.lock().await {
                 return true;
             }
         }

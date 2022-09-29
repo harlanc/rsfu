@@ -445,7 +445,7 @@ impl Publisher {
             ],
         };
 
-        let downtrack = DownTrack::new(c, receiver.clone(), peer_id, max_packet_track);
+        let downtrack = DownTrack::new(c, receiver.clone(), peer_id, max_packet_track).await;
 
         let downtrack_arc = Arc::new(downtrack);
 

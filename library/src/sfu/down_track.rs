@@ -47,7 +47,7 @@ pub type OnCloseFn =
 pub type OnBindFn =
     Box<dyn (FnMut() -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>) + Send + Sync>;
 
-enum DownTrackType {
+pub enum DownTrackType {
     SimpleDownTrack,
     SimulcastDownTrack,
 }
@@ -62,7 +62,7 @@ pub struct DownTrack {
     max_track: i32,
     payload_type: Mutex<u8>,
     sequencer: Arc<Mutex<AtomicSequencer>>,
-    track_type: DownTrackType,
+    pub track_type: DownTrackType,
     buffer_factory: Mutex<AtomicFactory>,
     pub payload: Vec<u8>,
 
@@ -74,13 +74,13 @@ pub struct DownTrack {
     re_sync: AtomicBool,
     sn_offset: u16,
     ts_offset: u32,
-    last_ssrc: AtomicU32,
+    pub last_ssrc: AtomicU32,
     last_sn: u16,
     last_ts: u32,
 
     pub simulcast: Arc<Mutex<SimulcastTrackHelpers>>,
-    max_spatial_layer: AtomicI32,
-    max_temporal_layer: AtomicI32,
+    pub max_spatial_layer: AtomicI32,
+    pub max_temporal_layer: AtomicI32,
 
     codec: RTCRtpCodecCapability,
     receiver: Arc<Mutex<dyn Receiver + Send + Sync>>,
@@ -215,7 +215,7 @@ impl DownTrack {
         // });
     }
 
-    fn set_initial_layers(&mut self, spatial_layer: i32, temporal_layer: i32) {
+    pub fn set_initial_layers(&mut self, spatial_layer: i32, temporal_layer: i32) {
         self.current_spatial_layer
             .store(spatial_layer, Ordering::Relaxed);
         self.target_spatial_layer
