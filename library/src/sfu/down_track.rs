@@ -47,9 +47,19 @@ pub type OnCloseFn =
 pub type OnBindFn =
     Box<dyn (FnMut() -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>) + Send + Sync>;
 
+#[derive(Default, Clone)]
 pub enum DownTrackType {
+    #[default]
     SimpleDownTrack,
     SimulcastDownTrack,
+}
+
+#[derive(Default, Clone)]
+pub struct DownTrackInfo {
+    pub layer: i32,
+    pub last_ssrc: u32,
+    pub track_type: DownTrackType,
+    pub payload: Vec<u8>,
 }
 
 pub struct DownTrack {
@@ -62,7 +72,7 @@ pub struct DownTrack {
     max_track: i32,
     payload_type: Mutex<u8>,
     sequencer: Arc<Mutex<AtomicSequencer>>,
-    pub track_type: DownTrackType,
+    track_type: Mutex<DownTrackType>,
     buffer_factory: Mutex<AtomicFactory>,
     pub payload: Vec<u8>,
 
@@ -72,15 +82,15 @@ pub struct DownTrack {
 
     enabled: AtomicBool,
     re_sync: AtomicBool,
-    sn_offset: u16,
-    ts_offset: u32,
-    pub last_ssrc: AtomicU32,
-    last_sn: u16,
-    last_ts: u32,
+    sn_offset: Mutex<u16>,
+    ts_offset: Mutex<u32>,
+    last_ssrc: AtomicU32,
+    last_sn: Mutex<u16>,
+    last_ts: Mutex<u32>,
 
     pub simulcast: Arc<Mutex<SimulcastTrackHelpers>>,
-    pub max_spatial_layer: AtomicI32,
-    pub max_temporal_layer: AtomicI32,
+    max_spatial_layer: AtomicI32,
+    max_temporal_layer: AtomicI32,
 
     codec: RTCRtpCodecCapability,
     receiver: Arc<Mutex<dyn Receiver + Send + Sync>>,
@@ -127,7 +137,7 @@ impl DownTrack {
             max_track: mt,
             payload_type: Mutex::new(0),
             sequencer: Arc::new(Mutex::new(AtomicSequencer::new(0))),
-            track_type: DownTrackType::SimpleDownTrack,
+            track_type: Mutex::new(DownTrackType::SimpleDownTrack),
             buffer_factory: Mutex::new(AtomicFactory::new(1000, 1000)),
             payload: Vec::new(),
 
@@ -137,11 +147,11 @@ impl DownTrack {
 
             enabled: AtomicBool::new(false),
             re_sync: AtomicBool::new(false),
-            sn_offset: 0,
-            ts_offset: 0,
+            sn_offset: Mutex::new(0),
+            ts_offset: Mutex::new(0),
             last_ssrc: AtomicU32::new(0),
-            last_sn: 0,
-            last_ts: 0,
+            last_sn: Mutex::new(0),
+            last_ts: Mutex::new(0),
 
             simulcast: Arc::new(Mutex::new(SimulcastTrackHelpers::new())),
             max_spatial_layer: AtomicI32::new(0),
@@ -177,12 +187,28 @@ impl DownTrack {
         self.transceiver = Some(transceiver)
     }
 
-    pub async fn write_rtp(&mut self, pkt: ExtPacket, layer: usize) -> Result<()> {
+    pub fn set_max_spatial_layer(&self, val: i32) {
+        self.max_spatial_layer.store(val, Ordering::Release);
+    }
+
+    pub fn set_max_temporal_layer(&self, val: i32) {
+        self.max_spatial_layer.store(val, Ordering::Release);
+    }
+
+    pub fn set_last_ssrc(&self, val: u32) {
+        self.last_ssrc.store(val, Ordering::Release);
+    }
+
+    pub async fn set_track_type(&self, track_type: DownTrackType) {
+        *self.track_type.lock().await = track_type;
+    }
+
+    pub async fn write_rtp(&self, pkt: ExtPacket, layer: usize) -> Result<()> {
         if !self.enabled.load(Ordering::Relaxed) || !self.bound.load(Ordering::Relaxed) {
             return Ok(());
         }
 
-        match self.track_type {
+        match *self.track_type.lock().await {
             DownTrackType::SimpleDownTrack => {
                 return self.write_simple_rtp(pkt).await;
             }
@@ -192,11 +218,11 @@ impl DownTrack {
         }
     }
 
-    fn enabled(&mut self) -> bool {
+    fn enabled(&self) -> bool {
         self.enabled.load(Ordering::Relaxed)
     }
 
-    pub fn mute(&mut self, val: bool) {
+    pub fn mute(&self, val: bool) {
         if self.enabled() != val {
             return;
         }
@@ -206,7 +232,7 @@ impl DownTrack {
         }
     }
 
-    pub async fn close(&mut self) {
+    pub async fn close(&self) {
         // self.close_once.call_once(|| {
         let mut handler = self.on_close_handler.lock().await;
         if let Some(f) = &mut *handler {
@@ -215,7 +241,7 @@ impl DownTrack {
         // });
     }
 
-    pub fn set_initial_layers(&mut self, spatial_layer: i32, temporal_layer: i32) {
+    pub fn set_initial_layers(&self, spatial_layer: i32, temporal_layer: i32) {
         self.current_spatial_layer
             .store(spatial_layer, Ordering::Relaxed);
         self.target_spatial_layer
@@ -228,15 +254,22 @@ impl DownTrack {
         self.current_spatial_layer.load(Ordering::Relaxed)
     }
 
-    pub async fn switch_spatial_layer(&self, target_layer: i32, set_as_max: bool) -> Result<()> {
-        match self.track_type {
+    pub async fn switch_spatial_layer(
+        self: &Arc<Self>,
+        target_layer: i32,
+        set_as_max: bool,
+    ) -> Result<()> {
+        match *self.track_type.lock().await {
             DownTrackType::SimulcastDownTrack => {
                 let csl = self.current_spatial_layer.load(Ordering::Relaxed);
                 if csl != self.target_spatial_layer.load(Ordering::Relaxed) || csl == target_layer {
                     return Err(WEBRTCError::new(String::from("error spatial layer busy..")));
                 }
                 let receiver = self.receiver.lock().await;
-                match receiver.switch_down_track(self, target_layer as u8) {
+                match receiver
+                    .switch_down_track(self.clone(), target_layer as usize)
+                    .await
+                {
                     Ok(_) => {
                         self.target_spatial_layer
                             .store(target_layer, Ordering::Relaxed);
@@ -257,12 +290,12 @@ impl DownTrack {
         )))
     }
 
-    pub fn switch_spatial_layer_done(&mut self, layer: i32) {
+    pub fn switch_spatial_layer_done(&self, layer: i32) {
         self.current_spatial_layer.store(layer, Ordering::Relaxed);
     }
 
     async fn untrack_layers_change(self: &Arc<Self>, available_layers: &[u16]) -> Result<i64> {
-        match self.track_type {
+        match *self.track_type.lock().await {
             DownTrackType::SimpleDownTrack => {
                 let current_layer = self.current_spatial_layer.load(Ordering::Relaxed) as u16;
                 let max_layer = self.max_spatial_layer.load(Ordering::Relaxed) as u16;
@@ -307,8 +340,8 @@ impl DownTrack {
         )))
     }
 
-    pub fn switch_temporal_layer(&self, target_layer: i32, set_as_max: bool) {
-        match self.track_type {
+    pub async fn switch_temporal_layer(&self, target_layer: i32, set_as_max: bool) {
+        match *self.track_type.lock().await {
             DownTrackType::SimulcastDownTrack => {
                 let layer = self.temporal_layer.load(Ordering::Relaxed);
                 let current_layer = layer as u16;
@@ -408,12 +441,12 @@ impl DownTrack {
         })
     }
 
-    fn update_stats(&mut self, packet_len: u32) {
+    fn update_stats(&self, packet_len: u32) {
         self.octet_count.store(packet_len, Ordering::Relaxed);
         self.packet_count.store(1, Ordering::Relaxed);
     }
 
-    async fn write_simple_rtp(&mut self, packet: ExtPacket) -> Result<()> {
+    async fn write_simple_rtp(&self, packet: ExtPacket) -> Result<()> {
         let mut ext_packet = packet.clone();
         let ssrc = self.ssrc.lock().await.clone();
         if self.re_sync.load(Ordering::Relaxed) {
@@ -431,9 +464,12 @@ impl DownTrack {
                 _ => {}
             }
 
-            if self.last_sn != 0 {
-                self.sn_offset = ext_packet.packet.header.sequence_number - self.last_sn - 1;
-                self.ts_offset = ext_packet.packet.header.timestamp - self.last_ts - 1
+            if *self.last_sn.lock().await != 0 {
+                let mut sn_offset = self.sn_offset.lock().await;
+                *sn_offset =
+                    ext_packet.packet.header.sequence_number - *self.last_sn.lock().await - 1;
+                let mut ts_offset = self.ts_offset.lock().await;
+                *ts_offset = ext_packet.packet.header.timestamp - *self.last_ts.lock().await - 1
             }
 
             self.last_ssrc
@@ -443,8 +479,9 @@ impl DownTrack {
 
         self.update_stats(ext_packet.packet.payload.len() as u32);
 
-        let new_sn = ext_packet.packet.header.sequence_number - self.sn_offset;
-        let new_ts = ext_packet.packet.header.timestamp - self.ts_offset;
+        let new_sn = ext_packet.packet.header.sequence_number - *self.sn_offset.lock().await;
+        let ts_offset = self.ts_offset.lock().await;
+        let new_ts = ext_packet.packet.header.timestamp - *ts_offset;
         let mut sequencer = self.sequencer.lock().await;
         sequencer
             .push(
@@ -457,8 +494,10 @@ impl DownTrack {
             .await;
 
         if ext_packet.head {
-            self.last_sn = new_sn;
-            self.last_ts = new_ts;
+            let mut last_sn = self.last_sn.lock().await;
+            *last_sn = new_sn;
+            let mut last_ts = self.last_ts.lock().await;
+            *last_ts = new_ts;
         }
         let header = &mut ext_packet.packet.header;
         header.payload_type = self.payload_type.lock().await.clone();
@@ -473,7 +512,7 @@ impl DownTrack {
         Ok(())
     }
 
-    async fn write_simulcast_rtp(&mut self, ext_packet: ExtPacket, layer: i32) -> Result<()> {
+    async fn write_simulcast_rtp(&self, ext_packet: ExtPacket, layer: i32) -> Result<()> {
         let re_sync = self.re_sync.load(Ordering::Relaxed);
         let csl = self.current_spatial_layer();
 
@@ -524,11 +563,16 @@ impl DownTrack {
                 if td == 0 {
                     td = 1;
                 }
-                self.ts_offset = ext_packet.packet.header.timestamp - (self.last_ts + td);
-                self.sn_offset = ext_packet.packet.header.sequence_number - self.last_sn - 1;
+                let mut ts_offset = self.ts_offset.lock().await;
+                *ts_offset = ext_packet.packet.header.timestamp - (*self.last_ts.lock().await + td);
+                let mut sn_offset = self.sn_offset.lock().await;
+                *sn_offset =
+                    ext_packet.packet.header.sequence_number - *self.last_sn.lock().await - 1;
             } else if simulcast.l_ts_calc == 0 {
-                self.last_ts = ext_packet.packet.header.timestamp;
-                self.last_sn = ext_packet.packet.header.sequence_number;
+                let mut last_ts = self.last_ts.lock().await;
+                *last_ts = ext_packet.packet.header.timestamp;
+                let mut last_sn = self.last_sn.lock().await;
+                *last_sn = ext_packet.packet.header.sequence_number;
                 let mime = self.mime.lock().await.clone();
                 if mime == String::from("video/vp8") {
                     let vp8 = ext_packet.payload;
@@ -537,8 +581,8 @@ impl DownTrack {
             }
         }
 
-        let new_sn = ext_packet.packet.header.sequence_number - self.sn_offset;
-        let new_ts = ext_packet.packet.header.timestamp - self.ts_offset;
+        let new_sn = ext_packet.packet.header.sequence_number - *self.sn_offset.lock().await;
+        let new_ts = ext_packet.packet.header.timestamp - *self.ts_offset.lock().await;
         let payload = &ext_packet.packet.payload;
 
         let pic_id: u16 = 0;
@@ -556,8 +600,8 @@ impl DownTrack {
         self.packet_count.fetch_add(1, Ordering::Relaxed);
 
         if ext_packet.head {
-            self.last_sn = new_sn;
-            self.last_ts = new_ts;
+            *self.last_sn.lock().await = new_sn;
+            *self.last_ts.lock().await = new_ts;
         }
         {
             let simulcast = &mut self.simulcast.lock().await;

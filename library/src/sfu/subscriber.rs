@@ -52,7 +52,7 @@ pub struct Subscriber {
     pc: Arc<RTCPeerConnection>,
     me: MediaEngine,
 
-    tracks: Arc<Mutex<HashMap<String, Vec<Arc<Mutex<DownTrack>>>>>>,
+    tracks: Arc<Mutex<HashMap<String, Vec<Arc<DownTrack>>>>>,
     channels: HashMap<String, Arc<RTCDataChannel>>,
     candidates: Vec<RTCIceCandidateInit>,
     on_negotiate_handler: Arc<Mutex<Option<OnNegotiateFn>>>,
@@ -183,7 +183,7 @@ impl Subscriber {
         Ok(())
     }
 
-    async fn add_down_track(&mut self, stream_id: String, down_track: Arc<Mutex<DownTrack>>) {
+    async fn add_down_track(&mut self, stream_id: String, down_track: Arc<DownTrack>) {
         if let Some(dt) = self.tracks.lock().await.get_mut(&stream_id) {
             dt.push(down_track)
         } else {
@@ -191,13 +191,13 @@ impl Subscriber {
         }
     }
 
-    async fn remove_down_track(&mut self, stream_id: String, down_track: DownTrack) {
+    async fn remove_down_track(&mut self, stream_id: String, down_track: Arc<DownTrack>) {
         if let Some(dts) = self.tracks.lock().await.get_mut(&stream_id) {
             let mut idx: i16 = -1;
 
             for (i, val) in dts.iter_mut().enumerate() {
-                let v = val.lock().await;
-                if v.id == down_track.id {
+                // let v = val.lock().await;
+                if val.id == down_track.id {
                     idx = i as i16;
                 }
             }
@@ -254,16 +254,16 @@ impl Subscriber {
 
             for dts in &*self.tracks.lock().await {
                 for dt in dts.1 {
-                    let dt_val = dt.lock().await;
-                    if dt_val.bound.load(Ordering::Relaxed) {
+                    // let dt_val = dt.lock().await;
+                    if dt.bound.load(Ordering::Relaxed) {
                         continue;
                     }
 
-                    if let Some(sr) = dt_val.create_sender_report().await {
+                    if let Some(sr) = dt.create_sender_report().await {
                         rtcp_packets.push(Box::new(sr));
                     }
 
-                    if let Some(sd) = dt_val.create_source_description_chunks().await {
+                    if let Some(sd) = dt.create_source_description_chunks().await {
                         sds.append(&mut sd.clone());
                     }
                 }
@@ -299,8 +299,8 @@ impl Subscriber {
         let mut rtcp_packets: Vec<Box<(dyn rtcp::packet::Packet + Send + Sync + 'static)>> = vec![];
 
         if let Some(dts) = self.tracks.lock().await.get(&stream_id) {
-            for dt_val in dts {
-                let dt = dt_val.lock().await;
+            for dt in dts {
+                /// let dt = dt_val.lock().await;
                 if !dt.bound.load(Ordering::Relaxed) {
                     continue;
                 }
@@ -358,8 +358,8 @@ impl Subscriber {
         self.data_channel(label)
     }
 
-    async fn downtracks(&mut self) -> Vec<Arc<Mutex<DownTrack>>> {
-        let mut downtracks: Vec<Arc<Mutex<DownTrack>>> = Vec::new();
+    async fn downtracks(&mut self) -> Vec<Arc<DownTrack>> {
+        let mut downtracks: Vec<Arc<DownTrack>> = Vec::new();
         for (_, v) in &mut *self.tracks.lock().await {
             downtracks.append(v);
         }
@@ -367,7 +367,7 @@ impl Subscriber {
         downtracks
     }
 
-    async fn get_downtracks(&self, stream_id: String) -> Option<Vec<Arc<Mutex<DownTrack>>>> {
+    async fn get_downtracks(&self, stream_id: String) -> Option<Vec<Arc<DownTrack>>> {
         if let Some(val) = self.tracks.lock().await.get(&stream_id) {
             Some(val.clone())
         } else {
@@ -383,7 +383,7 @@ impl Subscriber {
     }
 }
 
-async fn process(msg: DataChannelMessage, down_tracks: Vec<Arc<Mutex<DownTrack>>>) {
+async fn process(msg: DataChannelMessage, down_tracks: Vec<Arc<DownTrack>>) {
     let data = String::from_utf8(msg.data.to_vec()).unwrap();
     let set_remote_media = serde_json::from_str::<SetRemoteMedia>(&data).unwrap();
 
@@ -394,8 +394,8 @@ async fn process(msg: DataChannelMessage, down_tracks: Vec<Arc<Mutex<DownTrack>>
 
     if !set_remote_media.layers.is_none() && set_remote_media.layers.unwrap().len() > 0 {
     } else {
-        for dt in down_tracks {
-            let mut dt_val = dt.lock().await;
+        for dt_val in down_tracks {
+            // let mut dt_val = dt.lock().await;
             match dt_val.kind() {
                 RTPCodecType::Audio => dt_val.mute(!set_remote_media.audio),
                 RTPCodecType::Video => {

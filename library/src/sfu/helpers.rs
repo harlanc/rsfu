@@ -19,7 +19,7 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 pub async fn set_vp8_temporal_layer(
     ext_packet: ExtPacket,
-    d: &mut DownTrack,
+    d: &DownTrack,
 ) -> (Bytes, u16, u8, bool) {
     let pkt = ext_packet.payload;
     let layer = d.temporal_layer.load(Ordering::Relaxed);

@@ -446,10 +446,9 @@ impl Publisher {
         };
 
         let downtrack = DownTrack::new(c, receiver.clone(), peer_id, max_packet_track).await;
+        let mut receiver_mg = receiver.lock().await;
 
         let downtrack_arc = Arc::new(downtrack);
-
-        let mut receiver_mg = receiver.lock().await;
         let media_ssrc = track.ssrc();
         if let Some(webrtc_receiver) = (receiver_mg).as_any().downcast_ref::<WebRTCReceiver>() {
             // let down_track = downtrack_arc.lock().await;
@@ -514,7 +513,7 @@ impl Publisher {
                 }))
                 .await;
 
-            receiver_mg.add_down_track(downtrack_arc, true);
+           // receiver_mg.add_down_track(downtrack_arc, true);
         }
 
         Ok(())

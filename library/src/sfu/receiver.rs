@@ -9,10 +9,12 @@ use super::simulcast;
 use rtcp::packet::Packet as RtcpPacket;
 use webrtc::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
 
+use super::errors::Error;
+use super::errors::Result;
 use crate::buffer::buffer::Buffer;
 use rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU32, Ordering};
-use webrtc::error::{Error, Result};
+// use webrtc::error::Result;
 
 use crate::stats::stream::Stream;
 use std::sync::Weak;
@@ -21,6 +23,8 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use super::down_track::DownTrackType;
 use async_trait::async_trait;
 use tokio::sync::Mutex;
+
+use super::down_track::DownTrackInfo;
 
 use crate::buffer::errors::Error as SfuBufferError;
 use std::any::Any;
@@ -39,7 +43,7 @@ pub trait Receiver: Send + Sync {
     fn set_track_meta(&mut self, track_id: String, stream_id: String);
     async fn add_up_track(&mut self, track: TrackRemote, buffer: Buffer, best_quality_first: bool);
     async fn add_down_track(&mut self, track: Arc<DownTrack>, best_quality_first: bool);
-    fn switch_down_track(&self, track: &DownTrack, layer: u8) -> Result<()>;
+    async fn switch_down_track(&self, track: Arc<DownTrack>, layer: usize) -> Result<()>;
     fn get_bitrate(&self) -> Vec<u64>;
     fn get_max_temporal_layer(&self) -> Vec<i32>;
     fn retransmit_packets(&self, track: Arc<DownTrack>, packets: &[PacketMeta]) -> Result<()>;
@@ -68,9 +72,9 @@ pub struct WebRTCReceiver {
     up_tracks: [Option<TrackRemote>; 3],
     stats: [Option<Stream>; 3],
     available: [AtomicBool; 3],
-    down_tracks: [Arc<Mutex<Vec<Arc<Mutex<DownTrack>>>>>; 3],
+    down_tracks: [Arc<Mutex<Vec<Arc<DownTrack>>>>; 3],
     pending: [AtomicBool; 3],
-    pending_tracks: [Arc<Mutex<Vec<Arc<Mutex<DownTrack>>>>>; 3],
+    pending_tracks: [Arc<Mutex<Vec<Arc<DownTrack>>>>; 3],
     is_simulcast: bool,
     //on_close_handler: fn(),
 }
@@ -181,10 +185,7 @@ impl Receiver for WebRTCReceiver {
                     continue;
                 }
                 for d in &mut *dts {
-                    d.lock()
-                        .await
-                        .switch_spatial_layer(target_layer as i32, false)
-                        .await;
+                    d.switch_spatial_layer(target_layer as i32, false).await;
                 }
             }
         };
@@ -197,10 +198,7 @@ impl Receiver for WebRTCReceiver {
                     continue;
                 }
                 for d in &mut *dts {
-                    d.lock()
-                        .await
-                        .switch_spatial_layer(target_layer as i32, false)
-                        .await;
+                    d.switch_spatial_layer(target_layer as i32, false).await;
                 }
             }
         };
@@ -232,21 +230,36 @@ impl Receiver for WebRTCReceiver {
                     }
                 }
             }
-            if self.down_track_subscribed(layer, track).await {
+            if self.down_track_subscribed(layer, track.clone()).await {
                 return;
             }
             track.set_initial_layers(layer as i32, 2);
-            track.max_spatial_layer = AtomicI32::new(2);
-            track.max_temporal_layer = AtomicI32::new(2);
-            track.last_ssrc = AtomicU32::new(self.ssrc(layer));
-            track.track_type = DownTrackType::SimulcastDownTrack;
+            track.set_max_spatial_layer(2);
+            track.set_max_temporal_layer(2);
+            track.set_last_ssrc(self.ssrc(layer));
+            track
+                .set_track_type(DownTrackType::SimulcastDownTrack)
+                .await;
             // track.payload =
-
-            //  if self.dwo
         } else {
+            if self.down_track_subscribed(layer, track.clone()).await {
+                return;
+            }
+            track.set_initial_layers(0, 0);
+            track.set_track_type(DownTrackType::SimpleDownTrack).await;
         }
+
+        self.store_down_track(layer, track).await
     }
-    fn switch_down_track(&self, track: &DownTrack, layer: u8) -> Result<()> {
+    async fn switch_down_track(&self, track: Arc<DownTrack>, layer: usize) -> Result<()> {
+        if self.closed.load(Ordering::Relaxed) {
+            return Err(Error::ErrNoReceiverFound.into());
+        }
+
+        if self.available[layer].load(Ordering::Relaxed) {
+            self.pending[layer].store(true, Ordering::Relaxed);
+            self.pending_tracks[layer].lock().await.push(track);
+        }
         Ok(())
     }
 
@@ -267,9 +280,9 @@ impl Receiver for WebRTCReceiver {
         let mut down_tracks = self.down_tracks[layer].lock().await;
         let mut idx: usize = 0;
         for dt in &mut *down_tracks {
-            let mut dt_raw = dt.lock().await;
-            if dt_raw.id == id {
-                dt_raw.close().await;
+            //let mut dt_raw = dt.lock().await;
+            if dt.id == id {
+                dt.close().await;
                 break;
             }
             idx = idx + 1;
@@ -313,10 +326,10 @@ impl WebRTCReceiver {
                                 {
                                     let mut dts = self.pending_tracks[layer].lock().await;
                                     for dt in &mut *dts {
-                                        let dt_raw = dt.lock().await;
+                                        //let dt_raw = dt.lock().await;
                                         let current_spatial_layer =
-                                            dt_raw.current_spatial_layer() as usize;
-                                        let id = dt_raw.id.clone();
+                                            dt.current_spatial_layer() as usize;
+                                        let id = dt.id.clone();
                                         tmp_val.push((current_spatial_layer, id, dt.clone()));
                                     }
                                 }
@@ -324,7 +337,7 @@ impl WebRTCReceiver {
                                     self.delete_down_track(v.0, v.1).await;
                                     let dt = v.2;
                                     self.store_down_track(layer, dt.clone()).await;
-                                    dt.lock().await.switch_spatial_layer_done(layer as i32);
+                                    dt.switch_spatial_layer_done(layer as i32);
                                 }
                                 self.pending_tracks[layer].lock().await.clear();
                                 self.pending[layer].store(false, Ordering::Relaxed);
@@ -340,14 +353,13 @@ impl WebRTCReceiver {
                         {
                             let mut dts = self.down_tracks[layer].lock().await;
                             for dt in &mut *dts {
-                                let mut dt_value = dt.lock().await;
-                                if let Err(err) = dt_value.write_rtp(pkt.clone(), layer).await {
+                                //let mut dt_value = dt.lock().await;
+                                if let Err(err) = dt.write_rtp(pkt.clone(), layer).await {
                                     match err {
                                         RTCError::ErrClosedPipe
                                         | RTCError::ErrDataChannelNotOpen
                                         | RTCError::ErrConnectionClosed => {
-                                            delete_down_track_params
-                                                .push((layer, dt_value.id.clone()));
+                                            delete_down_track_params.push((layer, dt.id.clone()));
                                         }
                                         _ => {}
                                     }
@@ -368,10 +380,10 @@ impl WebRTCReceiver {
         }
     }
 
-    async fn down_track_subscribed(&self, layer: usize, dt: Arc<Mutex<DownTrack>>) -> bool {
+    async fn down_track_subscribed(&self, layer: usize, dt: Arc<DownTrack>) -> bool {
         let down_tracks = self.down_tracks[layer].lock().await;
         for down_track in &*down_tracks {
-            if *down_track.lock().await == *dt.lock().await {
+            if **down_track == *dt {
                 return true;
             }
         }
@@ -379,7 +391,7 @@ impl WebRTCReceiver {
         true
     }
 
-    async fn store_down_track(&mut self, layer: usize, dt: Arc<Mutex<DownTrack>>) {
+    async fn store_down_track(&self, layer: usize, dt: Arc<DownTrack>) {
         let dts = &mut self.down_tracks[layer].lock().await;
         dts.push(dt);
     }
