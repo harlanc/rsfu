@@ -1,3 +1,5 @@
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecParameters;
 use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
@@ -15,6 +17,7 @@ use crate::buffer::buffer::Buffer;
 use rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU32, Ordering};
 // use webrtc::error::Result;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::stats::stream::Stream;
 use std::sync::Weak;
@@ -22,6 +25,8 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 
 use super::down_track::DownTrackType;
 use async_trait::async_trait;
+use std::future::Future;
+use std::pin::Pin;
 use tokio::sync::Mutex;
 
 use super::down_track::DownTrackInfo;
@@ -32,6 +37,10 @@ use std::any::Any;
 use webrtc::error::Error as RTCError;
 
 pub type RtcpDataReceiver = mpsc::UnboundedReceiver<Vec<Box<dyn RtcpPacket + Send + Sync>>>;
+pub type RtcpDataSender = mpsc::UnboundedSender<Vec<Box<dyn RtcpPacket + Send + Sync>>>;
+
+pub type OnCloseHandlerFn =
+    Box<dyn (FnMut() -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>) + Send + Sync>;
 
 #[async_trait]
 pub trait Receiver: Send + Sync {
@@ -48,10 +57,13 @@ pub trait Receiver: Send + Sync {
     fn get_max_temporal_layer(&self) -> Vec<i32>;
     fn retransmit_packets(&self, track: Arc<DownTrack>, packets: &[PacketMeta]) -> Result<()>;
     async fn delete_down_track(&mut self, layer: usize, id: String);
-    fn on_close_handler(&self, func: fn());
-    fn send_rtcp(&self, p: Vec<Box<dyn RtcpPacket + Send + Sync>>);
-    fn set_rtcp_channel(&self);
-    fn get_sender_report_time(&self, layer: u8) -> (u32, u64);
+    async fn on_close_handler(&self, f: OnCloseHandlerFn);
+    fn send_rtcp(&self, p: Vec<Box<dyn RtcpPacket + Send + Sync>>) -> Result<()>;
+    fn set_rtcp_channel(
+        &mut self,
+        sender: mpsc::UnboundedSender<Vec<Box<dyn RtcpPacket + Send + Sync>>>,
+    );
+    fn get_sender_report_time(&self, layer: usize) -> (u32, u64);
     fn as_any(&self) -> &(dyn Any + Send + Sync);
 }
 
@@ -63,11 +75,11 @@ pub struct WebRTCReceiver {
     kind: RTPCodecType,
     closed: AtomicBool,
     bandwidth: u64,
-    last_pli: i64,
+    last_pli: AtomicU64,
     stream: String,
     pub receiver: Arc<RTCRtpReceiver>,
     codec: RTCRtpCodecParameters,
-    rtcp_channel: RtcpDataReceiver,
+    rtcp_sender: RtcpDataSender,
     buffers: [Option<Buffer>; 3],
     up_tracks: [Option<TrackRemote>; 3],
     stats: [Option<Stream>; 3],
@@ -76,7 +88,7 @@ pub struct WebRTCReceiver {
     pending: [AtomicBool; 3],
     pending_tracks: [Arc<Mutex<Vec<Arc<DownTrack>>>>; 3],
     is_simulcast: bool,
-    //on_close_handler: fn(),
+    on_close_handler: Arc<Mutex<Option<OnCloseHandlerFn>>>,
 }
 
 impl WebRTCReceiver {
@@ -92,9 +104,9 @@ impl WebRTCReceiver {
             is_simulcast: track.rid().len() > 0,
             closed: AtomicBool::default(),
             bandwidth: 0,
-            last_pli: 0,
+            last_pli: AtomicU64::default(),
             stream: String::default(),
-            rtcp_channel: r,
+            rtcp_sender: s,
             buffers: [None, None, None],
             up_tracks: [None, None, None],
             stats: [None, None, None],
@@ -118,7 +130,7 @@ impl WebRTCReceiver {
                 Arc::new(Mutex::new(Vec::new())),
                 Arc::new(Mutex::new(Vec::new())),
             ],
-            // ..Default::default()
+            on_close_handler: Arc::new(Mutex::new(None)), // ..Default::default()
         }
     }
 }
@@ -260,18 +272,36 @@ impl Receiver for WebRTCReceiver {
             self.pending[layer].store(true, Ordering::Relaxed);
             self.pending_tracks[layer].lock().await.push(track);
         }
-        Ok(())
+        return Err(Error::ErrNoReceiverFound.into());
     }
 
     fn get_bitrate(&self) -> Vec<u64> {
-        Vec::new()
+        let mut bitrates = Vec::new();
+        for buff in &self.buffers {
+            if let Some(b) = buff {
+                bitrates.push(b.bitrate)
+            }
+        }
+        bitrates
     }
     fn get_max_temporal_layer(&self) -> Vec<i32> {
-        Vec::new()
+        let mut temporal_layers = Vec::new();
+
+        for (idx, a) in self.available.iter().enumerate() {
+            if a.load(Ordering::Relaxed) {
+                if let Some(buff) = &self.buffers[idx] {
+                    temporal_layers.push(buff.max_temporal_layer)
+                }
+            }
+        }
+        temporal_layers
     }
-    fn retransmit_packets(&self, track: Arc<DownTrack>, packets: &[PacketMeta]) -> Result<()> {
-        Ok(())
+
+    async fn on_close_handler(&self, f: OnCloseHandlerFn) {
+        let mut handler = self.on_close_handler.lock().await;
+        *handler = Some(f);
     }
+
     async fn delete_down_track(&mut self, layer: usize, id: String) {
         if self.closed.load(Ordering::Relaxed) {
             return;
@@ -290,11 +320,41 @@ impl Receiver for WebRTCReceiver {
 
         down_tracks.remove(idx);
     }
-    fn on_close_handler(&self, func: fn()) {}
-    fn send_rtcp(&self, p: Vec<Box<dyn RtcpPacket + Send + Sync>>) {}
-    fn set_rtcp_channel(&self) {}
-    fn get_sender_report_time(&self, layer: u8) -> (u32, u64) {
-        (0, 0)
+
+    fn send_rtcp(&self, p: Vec<Box<dyn RtcpPacket + Send + Sync>>) -> Result<()> {
+        if let Some(packet) = p.get(0) {
+            if  packet.as_any().downcast_ref::<rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication>().is_some() {
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+                let threshold : u64 = 500 ;
+                if now - self.last_pli.load(Ordering::Relaxed) < threshold {
+                    return Ok(());
+                }
+                self.last_pli.store(now, Ordering::Relaxed) ;
+            }
+        }
+
+        if let Err(err) = self.rtcp_sender.send(p) {
+            return Err(Error::ErrChannelSend.into());
+        }
+
+        Ok(())
+    }
+    fn set_rtcp_channel(
+        &mut self,
+        sender: mpsc::UnboundedSender<Vec<Box<dyn RtcpPacket + Send + Sync>>>,
+    ) {
+        self.rtcp_sender = sender;
+    }
+    fn get_sender_report_time(&self, layer: usize) -> (u32, u64) {
+        let mut rtp_ts = 0;
+        let mut ntp_ts = 0;
+        if let Some(buffer) = &self.buffers[layer] {
+            (rtp_ts, ntp_ts, _) = buffer.get_sender_report_data();
+        }
+        (rtp_ts, ntp_ts)
+    }
+    fn retransmit_packets(&self, track: Arc<DownTrack>, packets: &[PacketMeta]) -> Result<()> {
+        Ok(())
     }
     fn as_any(&self) -> &(dyn Any + Send + Sync) {
         self

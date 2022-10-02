@@ -25,6 +25,8 @@ pub enum Error {
     ErrDataChannelNotExists,
     #[error("no receiver found")]
     ErrNoReceiverFound,
+    #[error("channel send error")]
+    ErrChannelSend,
     // #[error("webrtc error error")]
     // ErrWebRTCError(WebRTCErrorError),
 }

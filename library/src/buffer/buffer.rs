@@ -94,8 +94,8 @@ pub struct Buffer {
     min_packet_probe: i32,
     last_packet_read: i32,
 
-    max_temporal_layer: i32,
-    bitrate: u64,
+    pub max_temporal_layer: i32,
+    pub bitrate: u64,
     bitrate_helper: u64,
     last_srntp_time: u64,
     last_srrtp_time: u32,
@@ -483,7 +483,7 @@ impl Buffer {
         }
     }
 
-    fn set_sender_report_data(&mut self, rtp_time: u32, ntp_time: u64) {
+    pub fn set_sender_report_data(&mut self, rtp_time: u32, ntp_time: u64) {
         self.last_srrtp_time = rtp_time;
         self.last_srntp_time = ntp_time;
         self.last_sr_recv = Instant::now().elapsed().subsec_nanos() as i64;
@@ -528,7 +528,7 @@ impl Buffer {
         self.clock_rate
     }
 
-    fn get_sender_report_data(&self) -> (u32, u64, i64) {
+    pub fn get_sender_report_data(&self) -> (u32, u64, i64) {
         (
             self.last_srrtp_time,
             self.last_srntp_time,

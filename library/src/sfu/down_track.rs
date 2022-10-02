@@ -410,7 +410,7 @@ impl DownTrack {
 
         let receiver = self.receiver.lock().await;
         let (sr_rtp, sr_ntp) = receiver
-            .get_sender_report_time(self.current_spatial_layer.load(Ordering::Relaxed) as u8);
+            .get_sender_report_time(self.current_spatial_layer.load(Ordering::Relaxed) as usize);
 
         if sr_rtp == 0 {
             return None;
