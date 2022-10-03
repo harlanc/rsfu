@@ -183,6 +183,19 @@ impl DownTrack {
         Err(WEBRTCError::new(String::from("transceiver not exists")))
     }
 
+    pub async fn ssrc(&self) -> u32 {
+        let ssrc = self.ssrc.lock().await;
+        *ssrc
+    }
+
+    pub async fn payload_type(&self) -> u8 {
+        *self.payload_type.lock().await
+    }
+
+    pub async fn mime(&self) -> String {
+        *self.mime.lock().await
+    }
+
     fn set_transceiver(&mut self, transceiver: RTCRtpTransceiver) {
         self.transceiver = Some(transceiver)
     }

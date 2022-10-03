@@ -11,10 +11,14 @@ use super::simulcast;
 use rtcp::packet::Packet as RtcpPacket;
 use webrtc::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
 
+use bytes::{Bytes, BytesMut};
+use webrtc_util::marshal::{Marshal, MarshalSize, Unmarshal};
+
 use super::errors::Error;
 use super::errors::Result;
 use crate::buffer::buffer::Buffer;
 use rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
+use rtp::packet::Packet as RTCPacket;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU32, Ordering};
 // use webrtc::error::Result;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -55,7 +59,8 @@ pub trait Receiver: Send + Sync {
     async fn switch_down_track(&self, track: Arc<DownTrack>, layer: usize) -> Result<()>;
     fn get_bitrate(&self) -> Vec<u64>;
     fn get_max_temporal_layer(&self) -> Vec<i32>;
-    fn retransmit_packets(&self, track: Arc<DownTrack>, packets: &[PacketMeta]) -> Result<()>;
+    async fn retransmit_packets(&self, track: Arc<DownTrack>, packets: &[PacketMeta])
+        -> Result<()>;
     async fn delete_down_track(&mut self, layer: usize, id: String);
     async fn on_close_handler(&self, f: OnCloseHandlerFn);
     fn send_rtcp(&self, p: Vec<Box<dyn RtcpPacket + Send + Sync>>) -> Result<()>;
@@ -353,7 +358,45 @@ impl Receiver for WebRTCReceiver {
         }
         (rtp_ts, ntp_ts)
     }
-    fn retransmit_packets(&self, track: Arc<DownTrack>, packets: &[PacketMeta]) -> Result<()> {
+    async fn retransmit_packets(
+        &self,
+        track: Arc<DownTrack>,
+        packets: &[PacketMeta],
+    ) -> Result<()> {
+        for packet in packets {
+            if let Some(buffer) = &self.buffers[packet.layer as usize] {
+                let mut data = vec![0_u8; 65535];
+                if let Ok(size) = buffer.get_packet(&mut data[..], packet.source_seq_no) {
+                    let mut raw_data = Vec::new();
+                    raw_data.extend_from_slice(&data[..size]);
+
+                    let mut raw_pkt = Bytes::from(raw_data);
+                    let mut pkt = RTCPacket::unmarshal(&mut raw_pkt);
+                    match pkt {
+                        Ok(mut p) => {
+                            p.header.sequence_number = packet.target_seq_no;
+                            p.header.timestamp = packet.timestamp;
+                            p.header.ssrc = track.ssrc().await;
+                            p.header.payload_type = track.payload_type().await;
+
+                            if track.simulcast.lock().await.temporal_supported {
+                                let mime = track.mime().await.as_str();
+                                match mime {
+                                    "video/vp8" => {}
+                                    _ => {}
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            continue;
+                        }
+                    }
+                }
+            } else {
+                break;
+            }
+        }
+
         Ok(())
     }
     fn as_any(&self) -> &(dyn Any + Send + Sync) {

@@ -13,15 +13,15 @@ pub struct PacketMeta {
     // Original sequence number from stream.
     // The original sequence number is used to find the original
     // packet from publisher
-    source_seq_no: u16,
+    pub source_seq_no: u16,
     // Modified sequence number after offset.
     // This sequence number is used for the associated
     // down track, is modified according the offsets, and
     // must not be shared
-    target_seq_no: u16,
+    pub target_seq_no: u16,
     // Modified timestamp for current associated
     // down track.
-    timestamp: u32,
+    pub timestamp: u32,
     // The last time this packet was nack requested.
     // Sometimes clients request the same packet more than once, so keep
     // track of the requested packets helps to avoid writing multiple times
@@ -29,7 +29,7 @@ pub struct PacketMeta {
     // The resolution is 1 ms counting after the sequencer start time.
     last_nack: u128,
     // Spatial layer of packet
-    layer: u8,
+    pub layer: u8,
     // Information that differs depending the codec
     misc: u32,
 }

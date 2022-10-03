@@ -500,7 +500,7 @@ impl Buffer {
         rtcp_packets
     }
 
-    fn get_packet(&mut self, buff: &mut [u8], sn: u16) -> Result<usize> {
+    pub fn get_packet(&self, buff: &mut [u8], sn: u16) -> Result<usize> {
         if self.closed {
             return Err(Error::ErrIOEof.into());
         }
