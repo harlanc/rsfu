@@ -35,10 +35,10 @@ pub struct PacketMeta {
 }
 
 impl PacketMeta {
-    fn set_vp8_payload_meta(&mut self, tlz0_idx: u8, pic_id: u16) {
+    pub fn set_vp8_payload_meta(&mut self, tlz0_idx: u8, pic_id: u16) {
         self.misc = ((tlz0_idx as u32) << 16) | (pic_id as u32);
     }
-    fn get_vp8_payload_meta(&self) -> (u8, u16) {
+    pub fn get_vp8_payload_meta(&self) -> (u8, u16) {
         ((self.misc >> 16) as u8, self.misc as u16)
     }
 }

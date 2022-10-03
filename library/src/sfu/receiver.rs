@@ -16,6 +16,7 @@ use webrtc_util::marshal::{Marshal, MarshalSize, Unmarshal};
 
 use super::errors::Error;
 use super::errors::Result;
+use super::helpers;
 use crate::buffer::buffer::Buffer;
 use rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use rtp::packet::Packet as RTCPacket;
@@ -28,6 +29,7 @@ use std::sync::Weak;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use super::down_track::DownTrackType;
+use crate::buffer::helpers::VP8;
 use async_trait::async_trait;
 use std::future::Future;
 use std::pin::Pin;
@@ -371,7 +373,7 @@ impl Receiver for WebRTCReceiver {
                     raw_data.extend_from_slice(&data[..size]);
 
                     let mut raw_pkt = Bytes::from(raw_data);
-                    let mut pkt = RTCPacket::unmarshal(&mut raw_pkt);
+                    let pkt = RTCPacket::unmarshal(&mut raw_pkt);
                     match pkt {
                         Ok(mut p) => {
                             p.header.sequence_number = packet.target_seq_no;
@@ -379,12 +381,37 @@ impl Receiver for WebRTCReceiver {
                             p.header.ssrc = track.ssrc().await;
                             p.header.payload_type = track.payload_type().await;
 
+                            let mut payload = BytesMut::new();
+                            payload.extend_from_slice(&p.payload.slice(..));
+
                             if track.simulcast.lock().await.temporal_supported {
-                                let mime = track.mime().await.as_str();
-                                match mime {
-                                    "video/vp8" => {}
+                                let mime = track.mime().await;
+                                match mime.as_str() {
+                                    "video/vp8" => {
+                                        let mut vp8 = VP8::default();
+
+                                        if vp8.unmarshal(&p.payload).is_err() {
+                                            continue;
+                                        }
+                                        let (tlz0_id, pic_id) = packet.get_vp8_payload_meta();
+                                        helpers::modify_vp8_temporal_payload(
+                                            &mut payload,
+                                            vp8.picture_id_idx as usize,
+                                            vp8.tlz_idx as usize,
+                                            pic_id,
+                                            tlz0_id,
+                                            vp8.mbit,
+                                        )
+                                    }
                                     _ => {}
                                 }
+                            }
+
+                            match track.write_raw_rtp(p).await {
+                                Ok(_) => {
+                                    track.update_stats(size as u32);
+                                }
+                                Err(_) => {}
                             }
                         }
                         Err(_) => {
@@ -483,6 +510,22 @@ impl WebRTCReceiver {
         }
     }
 
+    async fn close_tracks(&self) {
+        for (idx, a) in self.available.iter().enumerate() {
+            if a.load(Ordering::Relaxed) {
+                continue;
+            }
+            let down_tracks = self.down_tracks[idx].lock().await;
+
+            for dt in &*down_tracks {
+                dt.close().await;
+            }
+        }
+
+        if let Some(close_handler) = &mut *self.on_close_handler.lock().await {
+            close_handler().await;
+        }
+    }
     async fn down_track_subscribed(&self, layer: usize, dt: Arc<DownTrack>) -> bool {
         let down_tracks = self.down_tracks[layer].lock().await;
         for down_track in &*down_tracks {

@@ -66,7 +66,7 @@ pub async fn set_vp8_temporal_layer(
     (rv_buf.freeze(), 0, 0, true)
 }
 
-fn modify_vp8_temporal_payload(
+pub fn modify_vp8_temporal_payload(
     payload: &mut BytesMut,
     pic_id_idx: usize,
     tlz0_idx: usize,

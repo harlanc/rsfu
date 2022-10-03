@@ -193,7 +193,8 @@ impl DownTrack {
     }
 
     pub async fn mime(&self) -> String {
-        *self.mime.lock().await
+        let mime = self.mime.lock().await;
+        mime.clone()
     }
 
     fn set_transceiver(&mut self, transceiver: RTCRtpTransceiver) {
@@ -229,6 +230,15 @@ impl DownTrack {
                 return self.write_simulcast_rtp(pkt, layer as i32).await;
             }
         }
+    }
+
+    pub async fn write_raw_rtp(&self, pkt: rtp::packet::Packet) -> Result<()> {
+        let write_stream_val = self.write_stream.lock().await;
+        if let Some(write_stream) = &*write_stream_val {
+            write_stream.write_rtp(&pkt).await?;
+        }
+
+        Ok(())
     }
 
     fn enabled(&self) -> bool {
@@ -454,7 +464,7 @@ impl DownTrack {
         })
     }
 
-    fn update_stats(&self, packet_len: u32) {
+    pub fn update_stats(&self, packet_len: u32) {
         self.octet_count.store(packet_len, Ordering::Relaxed);
         self.packet_count.store(1, Ordering::Relaxed);
     }
