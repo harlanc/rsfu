@@ -1,17 +1,19 @@
 use super::simulcast::SimulcastConfig;
 
 use super::down_track::DownTrack;
+use super::errors::Result;
 use super::receiver::Receiver;
 use super::receiver::WebRTCReceiver;
 use super::session::Session;
 use super::sfu::WebRTCTransportConfig;
 use super::subscriber::Subscriber;
 use crate::twcc::twcc::Responder;
-use anyhow::Result;
 use async_trait::async_trait;
 use rtcp::packet::Packet as RtcpPacket;
 use rtcp::raw_packet::RawPacket;
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use webrtc::peer_connection::RTCPeerConnection;
@@ -23,6 +25,25 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 
 pub type RtcpDataSender = mpsc::UnboundedSender<Vec<Box<Arc<dyn RtcpPacket + Send + Sync>>>>;
 
+pub type RtcpWriterFn = Box<
+    dyn (FnMut(
+            Vec<Box<dyn RtcpPacket + Send + Sync>>,
+        ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>)
+        + Send
+        + Sync,
+>;
+
+pub type OnAddReciverTrackFn = Box<
+    dyn (FnMut(Arc<RTCRtpReceiver>) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>)
+        + Send
+        + Sync,
+>;
+pub type OnDelReciverTrackFn = Box<
+    dyn (FnMut(Arc<RTCRtpReceiver>) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>)
+        + Send
+        + Sync,
+>;
+
 #[async_trait]
 pub trait Router {
     fn id(&self) -> String;
@@ -33,20 +54,22 @@ pub trait Router {
         track_id: String,
         stream_id: String,
     ) -> (Arc<Mutex<dyn Receiver + Send + Sync>>, bool);
-    fn add_down_tracks(&mut self) -> Result<()>;
-
-    // pub async fn write_rtcp(
-    //     &self,
-    //     pkts: &[Box<dyn rtcp::packet::Packet + Send + Sync>],
-    // ) -> Result<usize>
-
-    fn set_peer_connection(&mut self, pc: Arc<RTCPeerConnection>);
+    fn add_down_tracks(
+        &mut self,
+        s: Arc<Subscriber>,
+        r: Arc<Mutex<dyn Receiver + Send + Sync>>,
+    ) -> Result<()>;
     fn add_down_track(
         &mut self,
-        subscriber: Subscriber,
-        receiver: Arc<dyn Receiver + Send + Sync>,
-    ) -> Result<()>;
+        s: Arc<Subscriber>,
+        r: Arc<Mutex<dyn Receiver + Send + Sync>>,
+    ) -> Result<Arc<Option<DownTrack>>>;
+    fn set_rtcp_writer(&self, writer: RtcpWriterFn);
+    fn get_receiver(&self) -> HashMap<String, Arc<Mutex<dyn Receiver + Send + Sync>>>;
+    fn set_peer_connection(&mut self, pc: Arc<RTCPeerConnection>);
     async fn stop(&mut self);
+    async fn on_add_receiver_track(&self, f: OnAddReciverTrackFn);
+    async fn on_del_receiver_track(&self, f: OnDelReciverTrackFn);
 }
 
 #[derive(Default, Clone)]
@@ -68,6 +91,9 @@ pub struct RouterLocal {
     config: RouterConfig,
     session: Arc<Mutex<dyn Session + Send + Sync>>,
     receivers: HashMap<String, Arc<Mutex<dyn Receiver + Send + Sync>>>,
+    rtcp_writer_handler: Arc<Mutex<Option<RtcpWriterFn>>>,
+    on_add_receiver_track_handler: Arc<Mutex<Option<OnAddReciverTrackFn>>>,
+    on_del_receiver_track_handler: Arc<Mutex<Option<OnDelReciverTrackFn>>>,
 }
 impl RouterLocal {
     pub fn new(
@@ -76,7 +102,6 @@ impl RouterLocal {
         config: RouterConfig,
     ) -> Self {
         let (s, r) = mpsc::unbounded_channel();
-
         let (sender, _) = mpsc::channel(1);
         Self {
             id,
@@ -86,11 +111,28 @@ impl RouterLocal {
             config,
             session,
             receivers: HashMap::new(),
+            rtcp_writer_handler: Arc::new(Mutex::new(None)),
+            on_add_receiver_track_handler: Arc::new(Mutex::new(None)),
+            on_del_receiver_track_handler: Arc::new(Mutex::new(None)),
         }
     }
 }
+
 #[async_trait]
 impl Router for RouterLocal {
+    fn get_receiver(&self) -> HashMap<String, Arc<Mutex<dyn Receiver + Send + Sync>>> {
+        self.receivers.clone()
+    }
+
+    async fn on_add_receiver_track(&self, f: OnAddReciverTrackFn) {
+        let mut handler = self.on_add_receiver_track_handler.lock().await;
+        *handler = Some(f);
+    }
+    async fn on_del_receiver_track(&self, f: OnDelReciverTrackFn) {
+        let mut handler = self.on_del_receiver_track_handler.lock().await;
+        *handler = Some(f);
+    }
+
     fn id(&self) -> String {
         self.id.clone()
     }
@@ -147,21 +189,23 @@ impl Router for RouterLocal {
         (result_receiver, publish)
     }
 
-    fn add_down_tracks(&mut self) -> Result<()> {
+    fn add_down_tracks(
+        &mut self,
+        s: Arc<Subscriber>,
+        r: Arc<Mutex<dyn Receiver + Send + Sync>>,
+    ) -> Result<()> {
         Ok(())
     }
 
     fn add_down_track(
         &mut self,
-        subscriber: Subscriber,
-        receiver: Arc<dyn Receiver + Send + Sync>,
-    ) -> Result<()> {
-        // subscriber.me.
-
-        // let rv =  DownTrack::new(c, r, peer_id, mt)
-
-        Ok(())
+        s: Arc<Subscriber>,
+        r: Arc<Mutex<dyn Receiver + Send + Sync>>,
+    ) -> Result<(Arc<Option<DownTrack>>)> {
+        Ok(Arc::new(None))
     }
+
+    fn set_rtcp_writer(&self, writer: RtcpWriterFn) {}
 
     fn set_peer_connection(&mut self, pc: Arc<RTCPeerConnection>) {
         // Ok(());
