@@ -7,6 +7,7 @@ use super::receiver::WebRTCReceiver;
 use super::session::Session;
 use super::sfu::WebRTCTransportConfig;
 use super::subscriber::Subscriber;
+use crate::buffer::factory::AtomicFactory;
 use crate::twcc::twcc::Responder;
 use async_trait::async_trait;
 use rtcp::packet::Packet as RtcpPacket;
@@ -23,7 +24,7 @@ use webrtc::track::track_remote::TrackRemote;
 
 use tokio::sync::{broadcast, mpsc, oneshot};
 
-pub type RtcpDataSender = mpsc::UnboundedSender<Vec<Box<Arc<dyn RtcpPacket + Send + Sync>>>>;
+pub type RtcpDataSender = mpsc::UnboundedSender<Vec<Box<dyn RtcpPacket + Send + Sync>>>;
 
 pub type RtcpWriterFn = Box<
     dyn (FnMut(
@@ -85,12 +86,13 @@ pub struct RouterConfig {
 
 pub struct RouterLocal {
     id: String,
-    twcc: Option<Responder>,
+    twcc: Arc<Mutex<Option<Responder>>>,
     rtcp_channel: Arc<RtcpDataSender>,
     stop_channel: mpsc::Sender<()>,
     config: RouterConfig,
     session: Arc<Mutex<dyn Session + Send + Sync>>,
     receivers: HashMap<String, Arc<Mutex<dyn Receiver + Send + Sync>>>,
+    buffer_factory: AtomicFactory,
     rtcp_writer_handler: Arc<Mutex<Option<RtcpWriterFn>>>,
     on_add_receiver_track_handler: Arc<Mutex<Option<OnAddReciverTrackFn>>>,
     on_del_receiver_track_handler: Arc<Mutex<Option<OnDelReciverTrackFn>>>,
@@ -105,12 +107,13 @@ impl RouterLocal {
         let (sender, _) = mpsc::channel(1);
         Self {
             id,
-            twcc: None,
+            twcc: Arc::new(Mutex::new(None)),
             rtcp_channel: Arc::new(s),
             stop_channel: sender,
             config,
             session,
             receivers: HashMap::new(),
+            buffer_factory: AtomicFactory::new(100, 100),
             rtcp_writer_handler: Arc::new(Mutex::new(None)),
             on_add_receiver_track_handler: Arc::new(Mutex::new(None)),
             on_del_receiver_track_handler: Arc::new(Mutex::new(None)),
@@ -151,29 +154,75 @@ impl Router for RouterLocal {
     ) -> (Arc<Mutex<dyn Receiver + Send + Sync>>, bool) {
         let mut publish = false;
 
+        let buffer = self.buffer_factory.get_or_new_buffer(track.ssrc()).await;
+
+        let sender_for_buffer = Arc::clone(&self.rtcp_channel);
+        buffer
+            .lock()
+            .await
+            .on_feedback_callback(Box::new(
+                move |packets: Vec<Box<dyn RtcpPacket + Send + Sync>>| {
+                    let sender_for_buffer_in = Arc::clone(&sender_for_buffer);
+                    Box::pin(async move {
+                        sender_for_buffer_in.send(packets);
+                    })
+                },
+            ))
+            .await;
+
         match track.kind() {
             RTPCodecType::Audio => {
-                if let Some(mut observer) = self.session.lock().await.audio_obserber() {
+                let session_out = Arc::clone(&self.session);
+                let stream_id_out = stream_id.clone();
+                buffer
+                    .lock()
+                    .await
+                    .on_audio_level(Box::new(move |level: u8| {
+                        let session_in = Arc::clone(&session_out);
+                        let stream_id_in = stream_id_out.clone();
+                        Box::pin(async move {
+                            if let Some(observer) = session_in.lock().await.audio_obserber() {
+                                observer.observe(stream_id_in, level).await;
+                            }
+                        })
+                    }))
+                    .await;
+                if let Some(observer) = self.session.lock().await.audio_obserber() {
                     observer.add_stream(stream_id).await;
                 }
             }
             RTPCodecType::Video => {
-                if let Some(twcc) = &mut self.twcc {
+                if self.twcc.lock().await.is_none() {
+                    let mut twcc = Responder::new(track.ssrc());
                     let sender = Arc::clone(&self.rtcp_channel);
                     twcc.on_feedback(Box::new(
-                        move |rtcp_packet: Arc<dyn RtcpPacket + Send + Sync>| {
+                        move |rtcp_packet: Box<dyn RtcpPacket + Send + Sync>| {
                             let sender_in = Arc::clone(&sender);
                             Box::pin(async move {
                                 let mut data = Vec::new();
-                                data.push(Box::new(rtcp_packet));
+                                data.push(rtcp_packet);
                                 sender_in.send(data);
                             })
                         },
                     ))
                     .await;
-                } else {
-                    self.twcc = Some(Responder::new(track.ssrc()));
+                    self.twcc = Arc::new(Mutex::new(Some(twcc)));
                 }
+
+                let twcc_out = Arc::clone(&self.twcc);
+
+                buffer
+                    .lock()
+                    .await
+                    .on_transport_wide_cc(Box::new(move |sn: u16, time_ns: i64, marker: bool| {
+                        let twcc_in = Arc::clone(&twcc_out);
+                        Box::pin(async move {
+                            if let Some(twcc) = &mut *twcc_in.lock().await {
+                                twcc.push(sn, time_ns, marker).await;
+                            }
+                        })
+                    }))
+                    .await;
             }
             RTPCodecType::Unspecified => {}
         }

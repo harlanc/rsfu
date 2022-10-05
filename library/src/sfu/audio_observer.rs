@@ -55,7 +55,7 @@ impl AudioObserver {
         }
     }
 
-    async fn observe(&mut self, stream_id: String, d_bov: u8) {
+    pub async fn observe(&mut self, stream_id: String, d_bov: u8) {
         let mut streams = self.streams.lock().await;
 
         for stream in streams.iter_mut() {

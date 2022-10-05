@@ -42,20 +42,18 @@ const REPORT_DELTA: f64 = 1e9;
 pub type OnCloseFn =
     Box<dyn (FnMut() -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>) + Send + Sync>;
 pub type OnTransportWideCCFn = Box<
-    dyn (FnMut(u16, i64, bool) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>)
-        + Send
-        + Sync,
+    dyn (FnMut(u16, i64, bool) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>) + Send + Sync,
 >;
 pub type OnFeedbackCallBackFn = Box<
     dyn (FnMut(
-            Vec<Box<dyn RtcpPacket>>,
-        ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>)
+            Vec<Box<dyn RtcpPacket + Send + Sync>>,
+        ) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>)
         + Send
         + Sync,
 >;
-pub type OnAudioLevelFn = Box<
-    dyn (FnMut(u8) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>) + Send + Sync,
->;
+
+pub type OnAudioLevelFn =
+    Box<dyn (FnMut(u8) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>) + Send + Sync>;
 
 pub enum BufferPacketType {
     RTPBufferPacket = 1,

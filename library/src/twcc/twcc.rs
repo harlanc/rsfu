@@ -29,7 +29,7 @@ const TCC_REPORT_DELTA_AFTER_MARK: f64 = 50e6;
 
 pub type OnResponderFeedbackFn = Box<
     dyn (FnMut(
-            Arc<dyn RtcpPacket + Send + Sync>,
+            Box<dyn RtcpPacket + Send + Sync>,
         ) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>)
         + Send
         + Sync,
@@ -101,7 +101,7 @@ impl Responder {
         }
     }
 
-    async fn push(&mut self, sn: u16, time_ns: i64, marker: bool) {
+    pub async fn push(&mut self, sn: u16, time_ns: i64, marker: bool) {
         if sn < 0x0fff && (self.last_sn & 0xffff) > 0xf000 {
             self.cycles += 1 << 16
         }
