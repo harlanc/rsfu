@@ -18,7 +18,11 @@ use webrtc_util::{Marshal, MarshalSize, Unmarshal};
 use super::errors::Result;
 use std::borrow::BorrowMut;
 use std::collections::VecDeque;
+use std::future::Future;
 use std::isize::MAX;
+use std::pin::Pin;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -34,6 +38,24 @@ use crate::{buffer::bucket::Bucket, buffer::nack::NackQueue};
 
 const MAX_SEQUENCE_NUMBER: u32 = 1 << 16;
 const REPORT_DELTA: f64 = 1e9;
+
+pub type OnCloseFn =
+    Box<dyn (FnMut() -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>) + Send + Sync>;
+pub type OnTransportWideCCFn = Box<
+    dyn (FnMut(u16, i64, bool) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>)
+        + Send
+        + Sync,
+>;
+pub type OnFeedbackCallBackFn = Box<
+    dyn (FnMut(
+            Vec<Box<dyn RtcpPacket>>,
+        ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>)
+        + Send
+        + Sync,
+>;
+pub type OnAudioLevelFn = Box<
+    dyn (FnMut(u8) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>) + Send + Sync,
+>;
 
 pub enum BufferPacketType {
     RTPBufferPacket = 1,
@@ -67,7 +89,7 @@ pub struct Stats {
 pub struct Options {
     max_bitrate: u64,
 }
-#[derive(Debug, PartialEq, Default, Clone)]
+#[derive(Default, Clone)]
 pub struct Buffer {
     bucket: Option<Bucket>,
     nacker: Option<NackQueue>,
@@ -115,10 +137,10 @@ pub struct Buffer {
     video_pool_len: usize,
     audio_pool_len: usize,
     //callbacks
-    // on_close: fn(),
-    // on_audio_level: fn(level: u8),
-    // feedback_cb: fn(packets: &[Packet]),
-    // feedback_twcc: fn(sn: u16, time_ns: i64, marker: bool),
+    on_close_handler: Arc<Mutex<Option<OnCloseFn>>>,
+    on_transport_wide_cc_handler: Arc<Mutex<Option<OnTransportWideCCFn>>>,
+    on_feedback_callback_handler: Arc<Mutex<Option<OnFeedbackCallBackFn>>>,
+    on_audio_level_handler: Arc<Mutex<Option<OnAudioLevelFn>>>,
 }
 
 impl Buffer {
@@ -127,6 +149,86 @@ impl Buffer {
             media_ssrc: ssrc,
             ..Default::default()
         }
+    }
+
+    pub fn bind(&mut self, params: RTCRtpParameters, o: Options) {
+        let codec = &params.codecs[0];
+        self.clock_rate = codec.capability.clock_rate;
+        self.max_bitrate = o.max_bitrate;
+        self.mime = codec.capability.mime_type.to_lowercase();
+
+        if self.mime.starts_with("audio/") {
+            self.codec_type = RTPCodecType::Audio;
+            self.bucket = Some(Bucket::new(self.audio_pool_len));
+        } else if self.mime.starts_with("video/") {
+            self.codec_type = RTPCodecType::Video;
+            self.bucket = Some(Bucket::new(self.video_pool_len));
+        } else {
+            self.codec_type = RTPCodecType::Unspecified;
+        }
+
+        for ext in &params.header_extensions {
+            if ext.uri == extmap::TRANSPORT_CC_URI {
+                self.twcc_ext = ext.id as u8;
+                break;
+            }
+        }
+
+        match self.codec_type {
+            RTPCodecType::Video => {
+                for feedback in &codec.capability.rtcp_feedback {
+                    match feedback.typ.clone().as_str() {
+                        webrtc_rtp::TYPE_RTCP_FB_GOOG_REMB => {
+                            self.remb = true;
+                        }
+                        webrtc_rtp::TYPE_RTCP_FB_TRANSPORT_CC => {
+                            self.twcc = true;
+                        }
+                        webrtc_rtp::TYPE_RTCP_FB_NACK => {
+                            self.nack = true;
+                            self.nacker = Some(NackQueue::new());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            RTPCodecType::Audio => {
+                for ext in &params.header_extensions {
+                    if ext.uri == extmap::AUDIO_LEVEL_URI {
+                        self.audio_level = true;
+                        self.audio_ext = ext.id as u8;
+                    }
+                }
+            }
+
+            _ => {}
+        }
+
+        for pp in self.pending_packets.clone() {
+            self.calc(&pp.packet[..], pp.arrival_time as i64);
+        }
+        self.pending_packets.clear();
+        self.bound = true;
+    }
+
+    pub async fn read_extended(&mut self) -> Result<ExtPacket> {
+        loop {
+            if self.closed {
+                return Err(Error::ErrIOEof.into());
+            }
+
+            if self.ext_packets.len() > 0 {
+                let ext_pkt = self.ext_packets.pop_front().unwrap();
+                return Ok(ext_pkt);
+            }
+
+            sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    pub async fn on_close(&self, f: OnCloseFn) {
+        let mut handler = self.on_close_handler.lock().await;
+        *handler = Some(f);
     }
 
     pub fn calc(&mut self, pkt: &[u8], arrival_time: i64) {
@@ -333,81 +435,6 @@ impl Buffer {
         pkts
     }
 
-    pub fn bind(&mut self, params: RTCRtpParameters, o: Options) {
-        let codec = &params.codecs[0];
-        self.clock_rate = codec.capability.clock_rate;
-        self.max_bitrate = o.max_bitrate;
-        self.mime = codec.capability.mime_type.to_lowercase();
-
-        if self.mime.starts_with("audio/") {
-            self.codec_type = RTPCodecType::Audio;
-            self.bucket = Some(Bucket::new(self.audio_pool_len));
-        } else if self.mime.starts_with("video/") {
-            self.codec_type = RTPCodecType::Video;
-            self.bucket = Some(Bucket::new(self.video_pool_len));
-        } else {
-            self.codec_type = RTPCodecType::Unspecified;
-        }
-
-        for ext in &params.header_extensions {
-            if ext.uri == extmap::TRANSPORT_CC_URI {
-                self.twcc_ext = ext.id as u8;
-                break;
-            }
-        }
-
-        match self.codec_type {
-            RTPCodecType::Video => {
-                for feedback in &codec.capability.rtcp_feedback {
-                    match feedback.typ.clone().as_str() {
-                        webrtc_rtp::TYPE_RTCP_FB_GOOG_REMB => {
-                            self.remb = true;
-                        }
-                        webrtc_rtp::TYPE_RTCP_FB_TRANSPORT_CC => {
-                            self.twcc = true;
-                        }
-                        webrtc_rtp::TYPE_RTCP_FB_NACK => {
-                            self.nack = true;
-                            self.nacker = Some(NackQueue::new());
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            RTPCodecType::Audio => {
-                for ext in &params.header_extensions {
-                    if ext.uri == extmap::AUDIO_LEVEL_URI {
-                        self.audio_level = true;
-                        self.audio_ext = ext.id as u8;
-                    }
-                }
-            }
-
-            _ => {}
-        }
-
-        for pp in self.pending_packets.clone() {
-            self.calc(&pp.packet[..], pp.arrival_time as i64);
-        }
-        self.pending_packets.clear();
-        self.bound = true;
-    }
-
-    pub async fn read_extended(&mut self) -> Result<ExtPacket> {
-        loop {
-            if self.closed {
-                return Err(Error::ErrIOEof.into());
-            }
-
-            if self.ext_packets.len() > 0 {
-                let ext_pkt = self.ext_packets.pop_front().unwrap();
-                return Ok(ext_pkt);
-            }
-
-            sleep(Duration::from_millis(10)).await;
-        }
-    }
-
     fn build_remb_packet(&mut self) -> ReceiverEstimatedMaximumBitrate {
         let mut br = self.bitrate;
 
@@ -518,6 +545,21 @@ impl Buffer {
 
     fn max_temporal_layer(&self) -> i32 {
         self.max_temporal_layer
+    }
+
+    pub async fn on_transport_wide_cc(&self, f: OnTransportWideCCFn) {
+        let mut handler = self.on_transport_wide_cc_handler.lock().await;
+        *handler = Some(f);
+    }
+
+    pub async fn on_feedback_callback(&self, f: OnFeedbackCallBackFn) {
+        let mut handler = self.on_feedback_callback_handler.lock().await;
+        *handler = Some(f);
+    }
+
+    pub async fn on_audio_level(&self, f: OnAudioLevelFn) {
+        let mut handler = self.on_audio_level_handler.lock().await;
+        *handler = Some(f);
     }
 
     fn get_media_ssrc(&self) -> u32 {
