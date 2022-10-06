@@ -93,7 +93,7 @@ pub struct StreamStats {
 }
 
 pub struct Stream {
-    buffer: Buffer,
+    buffer: Arc<Mutex<Buffer>>,
 
     cname: Arc<Mutex<String>>,
     drift_in_millis: AtomicU64,
@@ -103,7 +103,7 @@ pub struct Stream {
 }
 
 impl Stream {
-    pub fn new(buffer: Buffer) -> Self {
+    pub fn new(buffer: Arc<Mutex<Buffer>>) -> Self {
         let prometheus_handler = PrometheusHandler::new();
 
         Self {
@@ -120,7 +120,7 @@ impl Stream {
         cname.clone()
     }
 
-    async fn set_cname(&mut self, val: String) {
+    pub async fn set_cname(&mut self, val: String) {
         let mut cname = self.cname.lock().await;
         *cname = val;
     }
@@ -160,7 +160,7 @@ impl Stream {
     }
 
     async fn calc_stats(&mut self) {
-        let buffer_stats = self.buffer.get_status();
+        let buffer_stats = self.buffer.lock().await.get_status();
         let drift_in_millis = self.get_drift_in_millis();
 
         let (has_stats, diff_stats) = self.update_stats(buffer_stats).await;
@@ -173,8 +173,6 @@ impl Stream {
             //self.prometheus_handler.expected_count.
         }
 
-       // self.prometheus_handler.expected_count
-
-
+        // self.prometheus_handler.expected_count
     }
 }

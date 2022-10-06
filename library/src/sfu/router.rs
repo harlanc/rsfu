@@ -8,6 +8,7 @@ use super::session::Session;
 use super::sfu::WebRTCTransportConfig;
 use super::subscriber::Subscriber;
 use crate::buffer::factory::AtomicFactory;
+use crate::stats::stream::Stream;
 use crate::twcc::twcc::Responder;
 use async_trait::async_trait;
 use rtcp::packet::Packet as RtcpPacket;
@@ -87,6 +88,7 @@ pub struct RouterConfig {
 pub struct RouterLocal {
     id: String,
     twcc: Arc<Mutex<Option<Responder>>>,
+    stats: Arc<Mutex<HashMap<u32, Stream>>>,
     rtcp_channel: Arc<RtcpDataSender>,
     stop_channel: mpsc::Sender<()>,
     config: RouterConfig,
@@ -108,6 +110,7 @@ impl RouterLocal {
         Self {
             id,
             twcc: Arc::new(Mutex::new(None)),
+            stats: Arc::new(Mutex::new(HashMap::new())),
             rtcp_channel: Arc::new(s),
             stop_channel: sender,
             config,
@@ -210,7 +213,6 @@ impl Router for RouterLocal {
                 }
 
                 let twcc_out = Arc::clone(&self.twcc);
-
                 buffer
                     .lock()
                     .await
@@ -226,6 +228,77 @@ impl Router for RouterLocal {
             }
             RTPCodecType::Unspecified => {}
         }
+
+        if self.config.with_stats {
+            let stream = Stream::new(Arc::clone(&buffer));
+            self.stats.lock().await.insert(track.ssrc(), stream);
+        }
+
+        let rtcp_reader = self
+            .buffer_factory
+            .get_or_new_rtcp_buffer(track.ssrc())
+            .await;
+
+        let stats_out = Arc::clone(&self.stats);
+        let buffer_out = Arc::clone(&buffer);
+        let with_status = self.config.with_stats;
+
+        rtcp_reader
+            .lock()
+            .await
+            .on_packet(Box::new(move |packet: Vec<u8>| {
+                let stats_in = Arc::clone(&stats_out);
+                let buffer_in = Arc::clone(&buffer_out);
+                Box::pin(async move {
+                    let mut buf = &packet[..];
+                    let pkts_result = rtcp::packet::unmarshal(&mut buf)?;
+                    for pkt in pkts_result {
+                        if let Some(source_description) =
+                            pkt.as_any()
+                                .downcast_ref::<rtcp::source_description::SourceDescription>()
+                        {
+                            if with_status {
+                                for chunk in &source_description.chunks {
+                                    if let Some(stream) =
+                                        stats_in.lock().await.get_mut(&chunk.source)
+                                    {
+                                        for item in &chunk.items {
+                                            if item.sdes_type
+                                                == rtcp::source_description::SdesType::SdesCname
+                                            {
+                                                stream
+                                                    .set_cname(
+                                                        String::from_utf8(item.text.to_vec())
+                                                            .unwrap(),
+                                                    )
+                                                    .await;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else if let Some(sender_report) =
+                            pkt.as_any()
+                                .downcast_ref::<rtcp::sender_report::SenderReport>()
+                        {
+                            buffer_in.lock().await.set_sender_report_data(
+                                sender_report.rtp_time,
+                                sender_report.ntp_time,
+                            );
+                            if with_status {
+                                if let Some(stream) =
+                                    stats_in.lock().await.get_mut(&sender_report.ssrc)
+                                {
+                                    //update stats
+                                }
+                            }
+                        }
+                    }
+                    Ok(())
+                })
+            }))
+            .await;
+
         let mut result_receiver;
 
         if let Some(recv) = self.receivers.get(&track_id) {

@@ -1,5 +1,6 @@
 use thiserror::Error;
 
+use rtcp::Error as RTCPError;
 use webrtc::Error as RTCError;
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -19,9 +20,17 @@ pub enum Error {
     ErrNilPacket,
     #[error("io EOF")]
     ErrIOEof,
+    #[error("rtcp error")]
+    ErrRTCP(RTCPError),
 }
 impl Error {
     pub fn equal(&self, err: &anyhow::Error) -> bool {
         err.downcast_ref::<Self>().map_or(false, |e| e == self)
+    }
+}
+
+impl From<RTCPError> for Error {
+    fn from(error: RTCPError) -> Self {
+        Error::ErrRTCP(error)
     }
 }

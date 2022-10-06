@@ -463,6 +463,7 @@ impl Publisher {
             let ssrc = sdr.get_parameters().await.encodings.get(0).unwrap().ssrc;
 
             let rtcp_reader = factory.lock().await.get_or_new_rtcp_buffer(ssrc).await;
+
             // let pc_out = self.pc.clone();
             rtcp_reader
                 .lock()
@@ -479,7 +480,7 @@ impl Publisher {
                                 pkts = pkts_rv;
                             }
                             Err(_) => {
-                                return;
+                               return Ok(());
                             }
                         }
                         let mut rpkts: Vec<Box<dyn RtcpPacket + Send + Sync>> = Vec::new();
@@ -500,6 +501,7 @@ impl Publisher {
                                 Err(_) => {}
                             }
                         }
+                        Ok(())
                     })
                 }))
                 .await;
@@ -513,7 +515,7 @@ impl Publisher {
                 }))
                 .await;
 
-           // receiver_mg.add_down_track(downtrack_arc, true);
+            // receiver_mg.add_down_track(downtrack_arc, true);
         }
 
         Ok(())

@@ -1,5 +1,6 @@
 use thiserror::Error;
 //use webrtc::error::Error as WebRTCErrorError;
+use rtcp::Error as RTCPError;
 use webrtc::Error as RTCError;
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -19,6 +20,8 @@ pub enum Error {
     ErrTurnNoneAuthKey,
     #[error("webrtc error")]
     ErrWebRTC(RTCError),
+    #[error("rtcp error")]
+    ErrRTCP(RTCPError),
     #[error("no subscriber for this peer")]
     ErrNoSubscriber,
     #[error("data channel doesn't exist")]
@@ -39,6 +42,12 @@ impl Error {
 impl From<RTCError> for Error {
     fn from(error: RTCError) -> Self {
         Error::ErrWebRTC(error)
+    }
+}
+
+impl From<RTCPError> for Error {
+    fn from(error: RTCPError) -> Self {
+        Error::ErrRTCP(error)
     }
 }
 

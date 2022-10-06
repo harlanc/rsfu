@@ -1,6 +1,6 @@
 use super::buffer_io::BufferIO;
 use crate::buffer::errors::*;
-use anyhow::Result;
+use super::errors::Result;
 use atomic::Atomic;
 use std::future::Future;
 use std::pin::Pin;
@@ -8,8 +8,11 @@ use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-pub type OnPacketFn =
-    Box<dyn (FnMut(Vec<u8>) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>) + Send + Sync>;
+pub type OnPacketFn = Box<
+    dyn (FnMut(Vec<u8>) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>)
+        + Send
+        + Sync,
+>;
 pub type OnCloseFn = Box<dyn (FnMut() -> Pin<Box<dyn Future<Output = ()> + Send>>) + Send + Sync>;
 
 pub struct RTCPReader {

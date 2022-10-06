@@ -889,7 +889,8 @@ impl TrackLocal for DownTrack {
             let receiver2 = receiver.clone();
             Box::pin(async move {
                 DownTrack::handle_rtcp(enabled, data, last_ssrc, ssrc_val, sequencer2, receiver2)
-                    .await
+                    .await;
+                Ok(())
             })
         }))
         .await;
