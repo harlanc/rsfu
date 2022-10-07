@@ -68,7 +68,7 @@ pub trait Receiver: Send + Sync {
     fn send_rtcp(&self, p: Vec<Box<dyn RtcpPacket + Send + Sync>>) -> Result<()>;
     fn set_rtcp_channel(
         &mut self,
-        sender: mpsc::UnboundedSender<Vec<Box<dyn RtcpPacket + Send + Sync>>>,
+        sender: Arc<mpsc::UnboundedSender<Vec<Box<dyn RtcpPacket + Send + Sync>>>>,
     );
     fn get_sender_report_time(&self, layer: usize) -> (u32, u64);
     fn as_any(&self) -> &(dyn Any + Send + Sync);
@@ -86,7 +86,7 @@ pub struct WebRTCReceiver {
     stream: String,
     pub receiver: Arc<RTCRtpReceiver>,
     codec: RTCRtpCodecParameters,
-    rtcp_sender: RtcpDataSender,
+    rtcp_sender: Arc<RtcpDataSender>,
     buffers: [Option<Buffer>; 3],
     up_tracks: [Option<TrackRemote>; 3],
     stats: [Option<Stream>; 3],
@@ -113,7 +113,7 @@ impl WebRTCReceiver {
             bandwidth: 0,
             last_pli: AtomicU64::default(),
             stream: String::default(),
-            rtcp_sender: s,
+            rtcp_sender: Arc::new(s),
             buffers: [None, None, None],
             up_tracks: [None, None, None],
             stats: [None, None, None],
@@ -348,7 +348,7 @@ impl Receiver for WebRTCReceiver {
     }
     fn set_rtcp_channel(
         &mut self,
-        sender: mpsc::UnboundedSender<Vec<Box<dyn RtcpPacket + Send + Sync>>>,
+        sender: Arc<mpsc::UnboundedSender<Vec<Box<dyn RtcpPacket + Send + Sync>>>>,
     ) {
         self.rtcp_sender = sender;
     }

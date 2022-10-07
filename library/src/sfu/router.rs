@@ -26,6 +26,7 @@ use webrtc::track::track_remote::TrackRemote;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 pub type RtcpDataSender = mpsc::UnboundedSender<Vec<Box<dyn RtcpPacket + Send + Sync>>>;
+pub type RtcpDataReceiver = mpsc::UnboundedReceiver<Vec<Box<dyn RtcpPacket + Send + Sync>>>;
 
 pub type RtcpWriterFn = Box<
     dyn (FnMut(
@@ -36,12 +37,16 @@ pub type RtcpWriterFn = Box<
 >;
 
 pub type OnAddReciverTrackFn = Box<
-    dyn (FnMut(Arc<RTCRtpReceiver>) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>)
+    dyn (FnMut(
+            Arc<Mutex<dyn Receiver + Send + Sync>>,
+        ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>)
         + Send
         + Sync,
 >;
 pub type OnDelReciverTrackFn = Box<
-    dyn (FnMut(Arc<RTCRtpReceiver>) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>)
+    dyn (FnMut(
+            Arc<Mutex<dyn Receiver + Send + Sync>>,
+        ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>)
         + Send
         + Sync,
 >;
@@ -69,7 +74,7 @@ pub trait Router {
     fn set_rtcp_writer(&self, writer: RtcpWriterFn);
     fn get_receiver(&self) -> HashMap<String, Arc<Mutex<dyn Receiver + Send + Sync>>>;
     fn set_peer_connection(&mut self, pc: Arc<RTCPeerConnection>);
-    async fn stop(&mut self);
+    async fn stop(&self);
     async fn on_add_receiver_track(&self, f: OnAddReciverTrackFn);
     async fn on_del_receiver_track(&self, f: OnDelReciverTrackFn);
 }
@@ -89,8 +94,10 @@ pub struct RouterLocal {
     id: String,
     twcc: Arc<Mutex<Option<Responder>>>,
     stats: Arc<Mutex<HashMap<u32, Stream>>>,
-    rtcp_channel: Arc<RtcpDataSender>,
-    stop_channel: mpsc::Sender<()>,
+    rtcp_sender_channel: Arc<RtcpDataSender>,
+    rtcp_receiver_channel: Arc<Mutex<RtcpDataReceiver>>,
+    stop_sender_channel: mpsc::UnboundedSender<()>,
+    stop_receiver_channel: mpsc::UnboundedReceiver<()>,
     config: RouterConfig,
     session: Arc<Mutex<dyn Session + Send + Sync>>,
     receivers: HashMap<String, Arc<Mutex<dyn Receiver + Send + Sync>>>,
@@ -106,13 +113,15 @@ impl RouterLocal {
         config: RouterConfig,
     ) -> Self {
         let (s, r) = mpsc::unbounded_channel();
-        let (sender, _) = mpsc::channel(1);
+        let (sender, receiver) = mpsc::unbounded_channel();
         Self {
             id,
             twcc: Arc::new(Mutex::new(None)),
             stats: Arc::new(Mutex::new(HashMap::new())),
-            rtcp_channel: Arc::new(s),
-            stop_channel: sender,
+            rtcp_sender_channel: Arc::new(s),
+            rtcp_receiver_channel: Arc::new(Mutex::new(r)),
+            stop_sender_channel: sender,
+            stop_receiver_channel: receiver,
             config,
             session,
             receivers: HashMap::new(),
@@ -120,6 +129,33 @@ impl RouterLocal {
             rtcp_writer_handler: Arc::new(Mutex::new(None)),
             on_add_receiver_track_handler: Arc::new(Mutex::new(None)),
             on_del_receiver_track_handler: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    async fn delete_receiver(&mut self, track: String, ssrc: u32) {
+        if let Some(f) = &mut *self.on_del_receiver_track_handler.lock().await {
+            if let Some(track) = self.receivers.get(&track) {
+                f(track.clone());
+            }
+        }
+        self.receivers.remove(&track);
+        self.stats.lock().await.remove(&ssrc);
+    }
+    async fn send_rtcp(&mut self) {
+        loop {
+            let mut rtcp_receiver = self.rtcp_receiver_channel.lock().await;
+            tokio::select! {
+              data = rtcp_receiver.recv() => {
+                if let Some(val) = data{
+                    if let Some(f) = &mut *self.rtcp_writer_handler.lock().await {
+                        f(val);
+                    }
+                }
+              }
+              data = self.stop_receiver_channel.recv() => {
+                return ;
+              }
+            };
         }
     }
 }
@@ -143,8 +179,8 @@ impl Router for RouterLocal {
         self.id.clone()
     }
 
-    async fn stop(&mut self) {
-        let rv = self.stop_channel.send(()).await;
+    async fn stop(&self) {
+        let rv = self.stop_sender_channel.send(());
         if self.config.with_stats {}
     }
 
@@ -159,7 +195,7 @@ impl Router for RouterLocal {
 
         let buffer = self.buffer_factory.get_or_new_buffer(track.ssrc()).await;
 
-        let sender_for_buffer = Arc::clone(&self.rtcp_channel);
+        let sender_for_buffer = Arc::clone(&self.rtcp_sender_channel);
         buffer
             .lock()
             .await
@@ -197,7 +233,7 @@ impl Router for RouterLocal {
             RTPCodecType::Video => {
                 if self.twcc.lock().await.is_none() {
                     let mut twcc = Responder::new(track.ssrc());
-                    let sender = Arc::clone(&self.rtcp_channel);
+                    let sender = Arc::clone(&self.rtcp_sender_channel);
                     twcc.on_feedback(Box::new(
                         move |rtcp_packet: Box<dyn RtcpPacket + Send + Sync>| {
                             let sender_in = Arc::clone(&sender);
@@ -304,8 +340,37 @@ impl Router for RouterLocal {
         if let Some(recv) = self.receivers.get(&track_id) {
             result_receiver = recv.clone();
         } else {
-            let rv = WebRTCReceiver::new(receiver, track, self.id.clone()).await;
+            let mut rv = WebRTCReceiver::new(receiver, track.clone(), self.id.clone()).await;
+            rv.set_rtcp_channel(self.rtcp_sender_channel.clone());
+            let recv_kind = rv.kind();
+            let session_out = self.session.clone();
+            let stream_id = track.stream_id().await;
+            rv.on_close_handler(Box::new(move || {
+                //let stats_in = Arc::clone(&stats_out);
+                let session_in = session_out.clone();
+                let stream_id_in = stream_id.clone();
+                Box::pin(async move {
+                    if with_status {
+                        // match track.kind() {
+                        //     RTPCodecType::Video => {
+                        //         //todo
+                        //     }
+                        //     _ => {
+                        //         //todo
+                        //     }
+                        // }
+                    }
+                    if recv_kind == RTPCodecType::Audio {
+                        if let Some(audio_observer) = session_in.lock().await.audio_obserber() {
+                            audio_observer.remove_stream(stream_id_in).await;
+                        }
+                    }
+                })
+            }))
+            .await;
             result_receiver = Arc::new(Mutex::new(rv));
+
+            self.receivers.insert(track_id, result_receiver.clone());
         }
 
         (result_receiver, publish)

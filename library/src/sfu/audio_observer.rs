@@ -43,7 +43,7 @@ impl AudioObserver {
         })
     }
 
-    async fn remove_stream(&mut self, stream_id: String) {
+    pub async fn remove_stream(&mut self, stream_id: String) {
         let mut streams = self.streams.lock().await;
         let mut idx = 0 as usize;
         while idx < streams.len() {
