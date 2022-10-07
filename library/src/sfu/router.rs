@@ -62,17 +62,17 @@ pub trait Router {
         track_id: String,
         stream_id: String,
     ) -> (Arc<Mutex<dyn Receiver + Send + Sync>>, bool);
-    fn add_down_tracks(
+    async fn add_down_tracks(
         &mut self,
         s: Arc<Subscriber>,
-        r: Arc<Mutex<dyn Receiver + Send + Sync>>,
+        r: Option<Arc<Mutex<dyn Receiver + Send + Sync>>>,
     ) -> Result<()>;
     fn add_down_track(
         &mut self,
         s: Arc<Subscriber>,
         r: Arc<Mutex<dyn Receiver + Send + Sync>>,
     ) -> Result<Arc<Option<DownTrack>>>;
-    fn set_rtcp_writer(&self, writer: RtcpWriterFn);
+    async fn set_rtcp_writer(&self, writer: RtcpWriterFn);
     fn get_receiver(&self) -> Arc<Mutex<HashMap<String, Arc<Mutex<dyn Receiver + Send + Sync>>>>>;
     fn set_peer_connection(&mut self, pc: Arc<RTCPeerConnection>);
     async fn stop(&self);
@@ -422,16 +422,29 @@ impl Router for RouterLocal {
         (result_receiver, publish)
     }
 
-    fn add_down_tracks(
+    async fn add_down_tracks(
         &mut self,
         s: Arc<Subscriber>,
-        r: Arc<Mutex<dyn Receiver + Send + Sync>>,
+        r: Option<Arc<Mutex<dyn Receiver + Send + Sync>>>,
     ) -> Result<()> {
         if s.no_auto_subscribe {
             return Ok(());
         }
 
-        
+        if let Some(receiver) = r {
+            self.add_down_track(s.clone(), receiver)?;
+            s.negotiate().await;
+            return Ok(());
+        }
+
+        let mut receivers = self.receivers.lock().await;
+        if receivers.len() > 0 {
+            for (_, receiver) in &mut *receivers {
+                //  self.add_down_track(s.clone(), receiver.clone())?;
+            }
+            s.negotiate().await;
+        }
+
         Ok(())
     }
 
@@ -443,7 +456,10 @@ impl Router for RouterLocal {
         Ok(Arc::new(None))
     }
 
-    fn set_rtcp_writer(&self, writer: RtcpWriterFn) {}
+    async fn set_rtcp_writer(&self, writer: RtcpWriterFn) {
+        let mut handler = self.rtcp_writer_handler.lock().await;
+        *handler = Some(writer);
+    }
 
     fn set_peer_connection(&mut self, pc: Arc<RTCPeerConnection>) {
         // Ok(());
