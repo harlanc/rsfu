@@ -56,21 +56,26 @@ pub trait Receiver: Send + Sync {
     fn kind(&self) -> RTPCodecType;
     fn ssrc(&self, layer: usize) -> u32;
     fn set_track_meta(&mut self, track_id: String, stream_id: String);
-    async fn add_up_track(&mut self, track: TrackRemote, buffer: Buffer, best_quality_first: bool);
+    async fn add_up_track(
+        &mut self,
+        track: Arc<TrackRemote>,
+        buffer: Arc<Mutex<Buffer>>,
+        best_quality_first: bool,
+    );
     async fn add_down_track(&mut self, track: Arc<DownTrack>, best_quality_first: bool);
     async fn switch_down_track(&self, track: Arc<DownTrack>, layer: usize) -> Result<()>;
-    fn get_bitrate(&self) -> Vec<u64>;
-    fn get_max_temporal_layer(&self) -> Vec<i32>;
+    async fn get_bitrate(&self) -> Vec<u64>;
+    async fn get_max_temporal_layer(&self) -> Vec<i32>;
     async fn retransmit_packets(&self, track: Arc<DownTrack>, packets: &[PacketMeta])
         -> Result<()>;
-    async fn delete_down_track(&mut self, layer: usize, id: String);
+    async fn delete_down_track(&self, layer: usize, id: String);
     async fn on_close_handler(&self, f: OnCloseHandlerFn);
     fn send_rtcp(&self, p: Vec<Box<dyn RtcpPacket + Send + Sync>>) -> Result<()>;
     fn set_rtcp_channel(
         &mut self,
         sender: Arc<mpsc::UnboundedSender<Vec<Box<dyn RtcpPacket + Send + Sync>>>>,
     );
-    fn get_sender_report_time(&self, layer: usize) -> (u32, u64);
+    async fn get_sender_report_time(&self, layer: usize) -> (u32, u64);
     fn as_any(&self) -> &(dyn Any + Send + Sync);
 }
 
@@ -87,8 +92,8 @@ pub struct WebRTCReceiver {
     pub receiver: Arc<RTCRtpReceiver>,
     codec: RTCRtpCodecParameters,
     rtcp_sender: Arc<RtcpDataSender>,
-    buffers: [Option<Buffer>; 3],
-    up_tracks: [Option<TrackRemote>; 3],
+    buffers: [Option<Arc<Mutex<Buffer>>>; 3],
+    up_tracks: [Option<Arc<TrackRemote>>; 3],
     stats: [Option<Stream>; 3],
     available: [AtomicBool; 3],
     down_tracks: [Arc<Mutex<Vec<Arc<DownTrack>>>>; 3],
@@ -171,7 +176,12 @@ impl Receiver for WebRTCReceiver {
         return 0;
     }
 
-    async fn add_up_track(&mut self, track: TrackRemote, buffer: Buffer, best_quality_first: bool) {
+    async fn add_up_track(
+        &mut self,
+        track: Arc<TrackRemote>,
+        buffer: Arc<Mutex<Buffer>>,
+        best_quality_first: bool,
+    ) {
         if self.closed.load(Ordering::Acquire) {
             return;
         }
@@ -282,22 +292,22 @@ impl Receiver for WebRTCReceiver {
         return Err(Error::ErrNoReceiverFound.into());
     }
 
-    fn get_bitrate(&self) -> Vec<u64> {
+    async fn get_bitrate(&self) -> Vec<u64> {
         let mut bitrates = Vec::new();
         for buff in &self.buffers {
             if let Some(b) = buff {
-                bitrates.push(b.bitrate)
+                bitrates.push(b.lock().await.bitrate)
             }
         }
         bitrates
     }
-    fn get_max_temporal_layer(&self) -> Vec<i32> {
+    async fn get_max_temporal_layer(&self) -> Vec<i32> {
         let mut temporal_layers = Vec::new();
 
         for (idx, a) in self.available.iter().enumerate() {
             if a.load(Ordering::Relaxed) {
                 if let Some(buff) = &self.buffers[idx] {
-                    temporal_layers.push(buff.max_temporal_layer)
+                    temporal_layers.push(buff.lock().await.max_temporal_layer)
                 }
             }
         }
@@ -309,7 +319,7 @@ impl Receiver for WebRTCReceiver {
         *handler = Some(f);
     }
 
-    async fn delete_down_track(&mut self, layer: usize, id: String) {
+    async fn delete_down_track(&self, layer: usize, id: String) {
         if self.closed.load(Ordering::Relaxed) {
             return;
         }
@@ -352,11 +362,11 @@ impl Receiver for WebRTCReceiver {
     ) {
         self.rtcp_sender = sender;
     }
-    fn get_sender_report_time(&self, layer: usize) -> (u32, u64) {
+    async fn get_sender_report_time(&self, layer: usize) -> (u32, u64) {
         let mut rtp_ts = 0;
         let mut ntp_ts = 0;
         if let Some(buffer) = &self.buffers[layer] {
-            (rtp_ts, ntp_ts, _) = buffer.get_sender_report_data();
+            (rtp_ts, ntp_ts, _) = buffer.lock().await.get_sender_report_data();
         }
         (rtp_ts, ntp_ts)
     }
@@ -368,7 +378,8 @@ impl Receiver for WebRTCReceiver {
         for packet in packets {
             if let Some(buffer) = &self.buffers[packet.layer as usize] {
                 let mut data = vec![0_u8; 65535];
-                if let Ok(size) = buffer.get_packet(&mut data[..], packet.source_seq_no) {
+                let mut buffer_raw = buffer.lock().await;
+                if let Ok(size) = buffer_raw.get_packet(&mut data[..], packet.source_seq_no) {
                     let mut raw_data = Vec::new();
                     raw_data.extend_from_slice(&data[..size]);
 
@@ -446,8 +457,9 @@ impl WebRTCReceiver {
         // })];
 
         loop {
-            if let Some(buffer) = &mut self.buffers[layer] {
-                match buffer.read_extended().await {
+            if let Some(buffer) = &self.buffers[layer] {
+                let mut buffer_raw = buffer.lock().await;
+                match buffer_raw.read_extended().await {
                     Ok(pkt) => {
                         if self.is_simulcast && self.pending[layer].load(Ordering::Relaxed) {
                             if pkt.key_frame {

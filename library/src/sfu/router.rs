@@ -7,6 +7,7 @@ use super::receiver::WebRTCReceiver;
 use super::session::Session;
 use super::sfu::WebRTCTransportConfig;
 use super::subscriber::Subscriber;
+use crate::buffer::buffer::Options as BufferOptions;
 use crate::buffer::factory::AtomicFactory;
 use crate::stats::stream::Stream;
 use crate::twcc::twcc::Responder;
@@ -72,7 +73,7 @@ pub trait Router {
         r: Arc<Mutex<dyn Receiver + Send + Sync>>,
     ) -> Result<Arc<Option<DownTrack>>>;
     fn set_rtcp_writer(&self, writer: RtcpWriterFn);
-    fn get_receiver(&self) -> HashMap<String, Arc<Mutex<dyn Receiver + Send + Sync>>>;
+    fn get_receiver(&self) -> Arc<Mutex<HashMap<String, Arc<Mutex<dyn Receiver + Send + Sync>>>>>;
     fn set_peer_connection(&mut self, pc: Arc<RTCPeerConnection>);
     async fn stop(&self);
     async fn on_add_receiver_track(&self, f: OnAddReciverTrackFn);
@@ -100,7 +101,7 @@ pub struct RouterLocal {
     stop_receiver_channel: mpsc::UnboundedReceiver<()>,
     config: RouterConfig,
     session: Arc<Mutex<dyn Session + Send + Sync>>,
-    receivers: HashMap<String, Arc<Mutex<dyn Receiver + Send + Sync>>>,
+    receivers: Arc<Mutex<HashMap<String, Arc<Mutex<dyn Receiver + Send + Sync>>>>>,
     buffer_factory: AtomicFactory,
     rtcp_writer_handler: Arc<Mutex<Option<RtcpWriterFn>>>,
     on_add_receiver_track_handler: Arc<Mutex<Option<OnAddReciverTrackFn>>>,
@@ -124,7 +125,7 @@ impl RouterLocal {
             stop_receiver_channel: receiver,
             config,
             session,
-            receivers: HashMap::new(),
+            receivers: Arc::new(Mutex::new(HashMap::new())),
             buffer_factory: AtomicFactory::new(100, 100),
             rtcp_writer_handler: Arc::new(Mutex::new(None)),
             on_add_receiver_track_handler: Arc::new(Mutex::new(None)),
@@ -134,11 +135,11 @@ impl RouterLocal {
 
     async fn delete_receiver(&mut self, track: String, ssrc: u32) {
         if let Some(f) = &mut *self.on_del_receiver_track_handler.lock().await {
-            if let Some(track) = self.receivers.get(&track) {
+            if let Some(track) = self.receivers.lock().await.get(&track) {
                 f(track.clone());
             }
         }
-        self.receivers.remove(&track);
+        self.receivers.lock().await.remove(&track);
         self.stats.lock().await.remove(&ssrc);
     }
     async fn send_rtcp(&mut self) {
@@ -162,7 +163,7 @@ impl RouterLocal {
 
 #[async_trait]
 impl Router for RouterLocal {
-    fn get_receiver(&self) -> HashMap<String, Arc<Mutex<dyn Receiver + Send + Sync>>> {
+    fn get_receiver(&self) -> Arc<Mutex<HashMap<String, Arc<Mutex<dyn Receiver + Send + Sync>>>>> {
         self.receivers.clone()
     }
 
@@ -337,18 +338,31 @@ impl Router for RouterLocal {
 
         let mut result_receiver;
 
-        if let Some(recv) = self.receivers.get(&track_id) {
+        if let Some(recv) = self.receivers.lock().await.get(&track_id) {
             result_receiver = recv.clone();
         } else {
-            let mut rv = WebRTCReceiver::new(receiver, track.clone(), self.id.clone()).await;
+            let mut rv =
+                WebRTCReceiver::new(receiver.clone(), track.clone(), self.id.clone()).await;
             rv.set_rtcp_channel(self.rtcp_sender_channel.clone());
             let recv_kind = rv.kind();
             let session_out = self.session.clone();
             let stream_id = track.stream_id().await;
+
+            let receivers_out = self.receivers.clone();
+            let stats_out = self.stats.clone();
+            let del_handler_out = self.on_add_receiver_track_handler.clone();
+            let track_id_out = track_id.clone();
+            let track_ssrc = track.ssrc();
             rv.on_close_handler(Box::new(move || {
                 //let stats_in = Arc::clone(&stats_out);
                 let session_in = session_out.clone();
                 let stream_id_in = stream_id.clone();
+                let track_id_in = track_id_out.clone();
+
+                let receivers_in = receivers_out.clone();
+                let stats_in = stats_out.clone();
+                let del_handler_in = del_handler_out.clone();
+
                 Box::pin(async move {
                     if with_status {
                         // match track.kind() {
@@ -365,14 +379,46 @@ impl Router for RouterLocal {
                             audio_observer.remove_stream(stream_id_in).await;
                         }
                     }
+                    delete_receiver(
+                        &track_id_in,
+                        &track_ssrc,
+                        del_handler_in,
+                        receivers_in,
+                        stats_in,
+                    )
+                    .await;
                 })
             }))
             .await;
             result_receiver = Arc::new(Mutex::new(rv));
 
-            self.receivers.insert(track_id, result_receiver.clone());
-        }
+            self.receivers
+                .lock()
+                .await
+                .insert(track_id, result_receiver.clone());
 
+            publish = true;
+
+            if let Some(f) = &mut *self.on_add_receiver_track_handler.lock().await {
+                f(result_receiver.clone());
+            }
+        }
+        result_receiver
+            .lock()
+            .await
+            .add_up_track(
+                track,
+                buffer.clone(),
+                self.config.simulcast.best_quality_first,
+            )
+            .await;
+
+        buffer.lock().await.bind(
+            receiver.get_parameters().await,
+            BufferOptions {
+                max_bitrate: self.config.max_bandwidth,
+            },
+        );
         (result_receiver, publish)
     }
 
@@ -381,6 +427,11 @@ impl Router for RouterLocal {
         s: Arc<Subscriber>,
         r: Arc<Mutex<dyn Receiver + Send + Sync>>,
     ) -> Result<()> {
+        if s.no_auto_subscribe {
+            return Ok(());
+        }
+
+        
         Ok(())
     }
 
@@ -397,4 +448,20 @@ impl Router for RouterLocal {
     fn set_peer_connection(&mut self, pc: Arc<RTCPeerConnection>) {
         // Ok(());
     }
+}
+
+async fn delete_receiver(
+    track: &String,
+    ssrc: &u32,
+    del_handler: Arc<Mutex<Option<OnDelReciverTrackFn>>>,
+    receivers: Arc<Mutex<HashMap<String, Arc<Mutex<dyn Receiver + Send + Sync>>>>>,
+    stats: Arc<Mutex<HashMap<u32, Stream>>>,
+) {
+    if let Some(f) = &mut *del_handler.lock().await {
+        if let Some(track) = receivers.lock().await.get(track) {
+            f(track.clone());
+        }
+    }
+    receivers.lock().await.remove(track);
+    stats.lock().await.remove(ssrc);
 }

@@ -433,7 +433,7 @@ impl DownTrack {
 
         let receiver = self.receiver.lock().await;
         let (sr_rtp, sr_ntp) = receiver
-            .get_sender_report_time(self.current_spatial_layer.load(Ordering::Relaxed) as usize);
+            .get_sender_report_time(self.current_spatial_layer.load(Ordering::Relaxed) as usize).await;
 
         if sr_rtp == 0 {
             return None;
@@ -666,9 +666,9 @@ impl DownTrack {
             let simulcast = &mut self.simulcast.lock().await;
             if now > simulcast.switch_delay {
                 let receiver = self.receiver.lock().await;
-                let brs = receiver.get_bitrate();
+                let brs = receiver.get_bitrate().await;
                 let cbr = brs[current_spatial_layer as usize];
-                let mtl = receiver.get_max_temporal_layer();
+                let mtl = receiver.get_max_temporal_layer().await;
                 let mctl = mtl[current_spatial_layer as usize];
 
                 if max_rate_packet_loss <= 5 {

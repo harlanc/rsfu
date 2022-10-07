@@ -85,7 +85,7 @@ pub struct Stats {
 }
 #[derive(Debug, Eq, PartialEq, Default, Clone)]
 pub struct Options {
-    max_bitrate: u64,
+    pub max_bitrate: u64,
 }
 #[derive(Default, Clone)]
 pub struct Buffer {
