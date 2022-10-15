@@ -482,7 +482,6 @@ impl Peer {
         self.dc_index += 1;
         let dc_parameters = DataChannelParameters {
             label,
-            id: idx,
             ordered: true,
             ..Default::default()
         };

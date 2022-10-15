@@ -328,7 +328,7 @@ impl Receiver for WebRTCReceiver {
         let mut idx: usize = 0;
         for dt in &mut *down_tracks {
             //let mut dt_raw = dt.lock().await;
-            if dt.id == id {
+            if dt.id() == id {
                 dt.close().await;
                 break;
             }
@@ -471,7 +471,7 @@ impl WebRTCReceiver {
                                         //let dt_raw = dt.lock().await;
                                         let current_spatial_layer =
                                             dt.current_spatial_layer() as usize;
-                                        let id = dt.id.clone();
+                                        let id = dt.id().clone();
                                         tmp_val.push((current_spatial_layer, id, dt.clone()));
                                     }
                                 }
@@ -501,7 +501,7 @@ impl WebRTCReceiver {
                                         RTCError::ErrClosedPipe
                                         | RTCError::ErrDataChannelNotOpen
                                         | RTCError::ErrConnectionClosed => {
-                                            delete_down_track_params.push((layer, dt.id.clone()));
+                                            delete_down_track_params.push((layer, dt.id().clone()));
                                         }
                                         _ => {}
                                     }

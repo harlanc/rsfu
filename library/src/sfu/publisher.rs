@@ -307,7 +307,7 @@ impl Publisher {
         Ok(answer)
     }
 
-    fn get_router(&self) -> Arc<Mutex<dyn Router + Send + Sync>> {
+    pub fn get_router(&self) -> Arc<Mutex<dyn Router + Send + Sync>> {
         self.router.clone()
     }
 
@@ -381,7 +381,7 @@ impl Publisher {
         data_channels
     }
 
-    fn relayed(&self) -> bool {
+    pub fn relayed(&self) -> bool {
         self.relayed.load(Ordering::Relaxed)
     }
 
@@ -552,7 +552,7 @@ impl Publisher {
                     .as_any()
                     .downcast_ref::<super::down_track::DownTrack>()
                 {
-                    if !down_track.bound.load(Ordering::Relaxed) {
+                    if !down_track.bound() {
                         continue;
                     }
 

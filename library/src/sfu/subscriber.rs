@@ -48,9 +48,9 @@ pub type OnNegotiateFn =
     Box<dyn (FnMut() -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>) + Send + Sync>;
 
 pub struct Subscriber {
-    id: String,
-    pc: Arc<RTCPeerConnection>,
-    me: MediaEngine,
+    pub id: String,
+    pub pc: Arc<RTCPeerConnection>,
+    pub me: MediaEngine,
 
     tracks: Arc<Mutex<HashMap<String, Vec<Arc<DownTrack>>>>>,
     channels: HashMap<String, Arc<RTCDataChannel>>,
@@ -97,14 +97,11 @@ impl Subscriber {
     pub async fn add_data_channel(
         &mut self,
         // subscriber: Arc<Mutex<Subscriber>>,
-        dc: Arc<Mutex<DataChannel>>,
+        dc: Arc<DataChannel>,
     ) -> Result<()> {
         let ndc = self
             .pc
-            .create_data_channel(
-                &dc.lock().await.label[..],
-                Some(RTCDataChannelInit::default()),
-            )
+            .create_data_channel(&dc.label[..], Some(RTCDataChannelInit::default()))
             .await?;
 
         let dc_out = dc.clone();
@@ -144,8 +141,7 @@ impl Subscriber {
         }))
         .await;
 
-        self.channels
-            .insert(dc.lock().await.label.clone(), ndc.clone());
+        self.channels.insert(dc.label.clone(), ndc.clone());
 
         Ok(())
     }
@@ -183,7 +179,7 @@ impl Subscriber {
         Ok(())
     }
 
-    async fn add_down_track(&mut self, stream_id: String, down_track: Arc<DownTrack>) {
+    pub async fn add_down_track(&mut self, stream_id: String, down_track: Arc<DownTrack>) {
         if let Some(dt) = self.tracks.lock().await.get_mut(&stream_id) {
             dt.push(down_track)
         } else {
@@ -191,13 +187,13 @@ impl Subscriber {
         }
     }
 
-    async fn remove_down_track(&mut self, stream_id: String, down_track: Arc<DownTrack>) {
+    pub async fn remove_down_track(&mut self, stream_id: String, down_track: Arc<DownTrack>) {
         if let Some(dts) = self.tracks.lock().await.get_mut(&stream_id) {
             let mut idx: i16 = -1;
 
             for (i, val) in dts.iter_mut().enumerate() {
                 // let v = val.lock().await;
-                if val.id == down_track.id {
+                if val.id() == down_track.id() {
                     idx = i as i16;
                 }
             }
@@ -221,12 +217,56 @@ impl Subscriber {
         Ok(channel)
     }
 
+    pub async fn set_remote_description(&mut self, desc: RTCSessionDescription) -> Result<()> {
+        self.pc.set_remote_description(desc).await?;
+
+        for candidate in &self.candidates {
+            self.pc.add_ice_candidate(candidate.clone()).await?;
+        }
+
+        self.candidates.clear();
+
+        Ok(())
+    }
+
+    pub fn register_data_channel(&mut self, label: String, dc: Arc<RTCDataChannel>) {
+        self.channels.insert(label, dc);
+    }
+
+    pub fn get_data_channel(&self, label: String) -> Option<Arc<RTCDataChannel>> {
+        self.data_channel(label)
+    }
+
+    async fn downtracks(&mut self) -> Vec<Arc<DownTrack>> {
+        let mut downtracks: Vec<Arc<DownTrack>> = Vec::new();
+        for (_, v) in &mut *self.tracks.lock().await {
+            downtracks.append(v);
+        }
+
+        downtracks
+    }
+
+    pub async fn get_downtracks(&self, stream_id: String) -> Option<Vec<Arc<DownTrack>>> {
+        if let Some(val) = self.tracks.lock().await.get(&stream_id) {
+            Some(val.clone())
+        } else {
+            None
+        }
+    }
+
+    pub async fn negotiate(&self) {
+        let mut handler = self.on_negotiate_handler.lock().await;
+        if let Some(f) = &mut *handler {
+            f().await;
+        }
+    }
+
     async fn on_ice_connection_state_change(&self) {
         let pc_out = Arc::clone(&self.pc);
+
         self.pc
             .on_ice_connection_state_change(Box::new(move |ice_state: RTCIceConnectionState| {
                 let pc_in = Arc::clone(&pc_out);
-
                 Box::pin(async move {
                     match ice_state {
                         RTCIceConnectionState::Failed | RTCIceConnectionState::Closed => {
@@ -255,7 +295,7 @@ impl Subscriber {
             for dts in &*self.tracks.lock().await {
                 for dt in dts.1 {
                     // let dt_val = dt.lock().await;
-                    if dt.bound.load(Ordering::Relaxed) {
+                    if dt.bound() {
                         continue;
                     }
 
@@ -294,14 +334,14 @@ impl Subscriber {
         }
     }
 
-    async fn send_stream_down_track_reports(&self, stream_id: String) {
+    pub async fn send_stream_down_track_reports(&self, stream_id: String) {
         let mut sds = Vec::new();
         let mut rtcp_packets: Vec<Box<(dyn rtcp::packet::Packet + Send + Sync + 'static)>> = vec![];
 
         if let Some(dts) = self.tracks.lock().await.get(&stream_id) {
             for dt in dts {
                 /// let dt = dt_val.lock().await;
-                if !dt.bound.load(Ordering::Relaxed) {
+                if !dt.bound() {
                     continue;
                 }
                 if let Some(dcs) = dt.create_source_description_chunks().await {
@@ -338,48 +378,15 @@ impl Subscriber {
         Ok(())
     }
 
-    pub async fn set_remote_description(&mut self, desc: RTCSessionDescription) -> Result<()> {
-        self.pc.set_remote_description(desc).await?;
-
-        for candidate in &self.candidates {
-            self.pc.add_ice_candidate(candidate.clone()).await?;
+    pub async fn add_data_channel_2(&mut self, label: String) -> Result<Arc<RTCDataChannel>> {
+        if let Some(channel) = self.channels.get(&label) {
+            return Ok(channel.clone());
         }
 
-        self.candidates.clear();
+        let data_channel = self.pc.create_data_channel(label.as_str(), None).await?;
+        self.channels.insert(label, data_channel.clone());
 
-        Ok(())
-    }
-
-    pub fn register_data_channel(&mut self, label: String, dc: Arc<RTCDataChannel>) {
-        self.channels.insert(label, dc);
-    }
-
-    pub fn get_data_channel(&self, label: String) -> Option<Arc<RTCDataChannel>> {
-        self.data_channel(label)
-    }
-
-    async fn downtracks(&mut self) -> Vec<Arc<DownTrack>> {
-        let mut downtracks: Vec<Arc<DownTrack>> = Vec::new();
-        for (_, v) in &mut *self.tracks.lock().await {
-            downtracks.append(v);
-        }
-
-        downtracks
-    }
-
-    async fn get_downtracks(&self, stream_id: String) -> Option<Vec<Arc<DownTrack>>> {
-        if let Some(val) = self.tracks.lock().await.get(&stream_id) {
-            Some(val.clone())
-        } else {
-            None
-        }
-    }
-
-    pub async fn negotiate(&self) {
-        let mut handler = self.on_negotiate_handler.lock().await;
-        if let Some(f) = &mut *handler {
-            f().await;
-        }
+        Ok(data_channel)
     }
 }
 

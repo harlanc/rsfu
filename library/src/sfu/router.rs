@@ -1,6 +1,7 @@
 use super::simulcast::SimulcastConfig;
 
 use super::down_track::DownTrack;
+use super::down_track_local::DownTrackLocal;
 use super::errors::Result;
 use super::receiver::Receiver;
 use super::receiver::WebRTCReceiver;
@@ -19,9 +20,16 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use webrtc::error::Error as RTCError;
+use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::RTCPeerConnection;
+use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
 use webrtc::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
+use webrtc::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
+use webrtc::rtp_transceiver::RTCPFeedback;
+use webrtc::rtp_transceiver::{RTCRtpTransceiverInit, SSRC};
+use webrtc::track::track_local::TrackLocal;
 use webrtc::track::track_remote::TrackRemote;
 
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -64,14 +72,14 @@ pub trait Router {
     ) -> (Arc<Mutex<dyn Receiver + Send + Sync>>, bool);
     async fn add_down_tracks(
         &mut self,
-        s: Arc<Subscriber>,
+        s: Arc<Mutex<Subscriber>>,
         r: Option<Arc<Mutex<dyn Receiver + Send + Sync>>>,
     ) -> Result<()>;
-    fn add_down_track(
+    async fn add_down_track(
         &mut self,
-        s: Arc<Subscriber>,
+        s: Arc<Mutex<Subscriber>>,
         r: Arc<Mutex<dyn Receiver + Send + Sync>>,
-    ) -> Result<Arc<Option<DownTrack>>>;
+    ) -> Result<Option<Arc<DownTrack>>>;
     async fn set_rtcp_writer(&self, writer: RtcpWriterFn);
     fn get_receiver(&self) -> Arc<Mutex<HashMap<String, Arc<Mutex<dyn Receiver + Send + Sync>>>>>;
     fn set_peer_connection(&mut self, pc: Arc<RTCPeerConnection>);
@@ -424,41 +432,166 @@ impl Router for RouterLocal {
 
     async fn add_down_tracks(
         &mut self,
-        s: Arc<Subscriber>,
+        s: Arc<Mutex<Subscriber>>,
         r: Option<Arc<Mutex<dyn Receiver + Send + Sync>>>,
     ) -> Result<()> {
-        if s.no_auto_subscribe {
+        let sub = s.lock().await;
+        if sub.no_auto_subscribe {
             return Ok(());
         }
 
         if let Some(receiver) = r {
-            self.add_down_track(s.clone(), receiver)?;
-            s.negotiate().await;
+            self.add_down_track(s.clone(), receiver).await?;
+            sub.negotiate().await;
             return Ok(());
         }
 
-        let mut receivers = self.receivers.lock().await;
-        if receivers.len() > 0 {
+        let mut recs = Vec::new();
+        {
+            let mut receivers = self.receivers.lock().await;
             for (_, receiver) in &mut *receivers {
-                //  self.add_down_track(s.clone(), receiver.clone())?;
+                recs.push(receiver.clone())
             }
-            s.negotiate().await;
+        }
+
+        if recs.len() > 0 {
+            for val in recs {
+                self.add_down_track(s.clone(), val.clone()).await?;
+            }
+            sub.negotiate().await;
         }
 
         Ok(())
     }
 
-    fn add_down_track(
+    async fn add_down_track(
         &mut self,
-        s: Arc<Subscriber>,
+        s: Arc<Mutex<Subscriber>>,
         r: Arc<Mutex<dyn Receiver + Send + Sync>>,
-    ) -> Result<(Arc<Option<DownTrack>>)> {
-        Ok(Arc::new(None))
+    ) -> Result<(Option<Arc<DownTrack>>)> {
+        let mut recv = r.lock().await;
+        let mut sub = s.lock().await;
+        for dt in sub.get_downtracks(recv.stream_id()).await.unwrap() {
+            if dt.id() == recv.track_id() {
+                return Ok(Some(dt));
+            }
+        }
+
+        let codec = recv.codec();
+        sub.me.register_codec(codec.clone(), recv.kind())?;
+
+        let codec_capability = RTCRtpCodecCapability {
+            mime_type: codec.capability.mime_type,
+            clock_rate: codec.capability.clock_rate,
+            channels: codec.capability.channels,
+            sdp_fmtp_line: codec.capability.sdp_fmtp_line,
+            rtcp_feedback: vec![
+                RTCPFeedback {
+                    typ: String::from("goog-remb"),
+                    parameter: String::from(""),
+                },
+                RTCPFeedback {
+                    typ: String::from("nack"),
+                    parameter: String::from(""),
+                },
+                RTCPFeedback {
+                    typ: String::from("nack"),
+                    parameter: String::from("pli"),
+                },
+            ],
+        };
+
+        let down_track_local =
+            DownTrackLocal::new(codec_capability, r.clone(), self.config.max_packet_track).await;
+
+        let down_track_arc = Arc::new(down_track_local);
+
+        let transceiver = sub
+            .pc
+            .add_transceiver_from_track(
+                down_track_arc.clone(),
+                &[RTCRtpTransceiverInit {
+                    direction: RTCRtpTransceiverDirection::Sendonly,
+                    send_encodings: Vec::new(),
+                }],
+            )
+            .await?;
+
+        let mut down_track = DownTrack::new_track_local(sub.id.clone(), down_track_arc);
+        down_track.set_transceiver(transceiver.clone());
+
+        let down_track_arc = Arc::new(down_track);
+
+        let s_out = s.clone();
+        let r_out = r.clone();
+        let transceiver_out = transceiver.clone();
+        let down_track_arc_out = down_track_arc.clone();
+
+        down_track_arc
+            .on_close_handler(Box::new(move || {
+                let s_in = s_out.clone();
+                let r_in = r_out.clone();
+                let transceiver_in = transceiver_out.clone();
+                let down_track_arc_in = down_track_arc_out.clone();
+                Box::pin(async move {
+                    let mut sub_in = s_in.lock().await;
+                    if sub_in.pc.connection_state() != RTCPeerConnectionState::Closed {
+                        let rv = sub_in
+                            .pc
+                            .remove_track(&transceiver_in.sender().await.unwrap())
+                            .await;
+                        match rv {
+                            Ok(_) => {
+                                sub_in
+                                    .remove_down_track(
+                                        r_in.lock().await.stream_id(),
+                                        down_track_arc_in,
+                                    )
+                                    .await;
+                                sub_in.negotiate().await;
+                            }
+                            Err(err) => match err {
+                                RTCError::ErrConnectionClosed => {
+                                    return;
+                                }
+                                _ => {}
+                            },
+                        }
+                    }
+                })
+            }))
+            .await;
+
+        let s_out_1 = s.clone();
+        let r_out_1 = r.clone();
+        down_track_arc
+            .on_bind(Box::new(move || {
+                let s_in = s_out_1.clone();
+                let r_in = r_out_1.clone();
+
+                Box::pin(async move {
+                    tokio::spawn(async move {
+                        s_in.lock()
+                            .await
+                            .send_stream_down_track_reports(r_in.lock().await.stream_id())
+                            .await;
+                    });
+                })
+            }))
+            .await;
+
+        sub.add_down_track(recv.stream_id(), down_track_arc.clone())
+            .await;
+        recv.add_down_track(down_track_arc, self.config.simulcast.best_quality_first)
+            .await;
+
+        Ok(None)
     }
 
     async fn set_rtcp_writer(&self, writer: RtcpWriterFn) {
         let mut handler = self.rtcp_writer_handler.lock().await;
         *handler = Some(writer);
+        //todo
     }
 
     fn set_peer_connection(&mut self, pc: Arc<RTCPeerConnection>) {

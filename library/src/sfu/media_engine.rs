@@ -168,8 +168,7 @@ pub(super) async fn get_publisher_media_engine() -> Result<MediaEngine> {
             },
             RTPCodecType::Video,
             Vec::new(),
-        )
-        .await?;
+        )?;
     }
 
     let extensions_audio = vec![
@@ -185,8 +184,7 @@ pub(super) async fn get_publisher_media_engine() -> Result<MediaEngine> {
             },
             RTPCodecType::Audio,
             Vec::new(),
-        )
-        .await?;
+        )?;
     }
     Ok(me)
 }

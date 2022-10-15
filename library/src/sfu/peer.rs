@@ -49,10 +49,11 @@ pub type OnIceConnectionStateChangeFn = Box<
 pub trait Peer {
     fn id(&self) -> String;
     fn session(&self) -> Option<Arc<Mutex<dyn Session + Send + Sync>>>;
-    // fn publisher() -> Arc<Publisher>;
+    fn publisher(&self) -> Option<Arc<Mutex<Publisher>>>;
     fn subscriber(&self) -> Option<Arc<Mutex<Subscriber>>>;
-    // fn close() -> Result<()>;
-    // fn send_data_channel_message(label: String, msg: Bytes) -> Result<()>;
+    //fn close() -> Result<()>;
+    //no used now
+    //fn send_data_channel_message(label: String, msg: Bytes) -> Result<()>;
 
     // async fn add_peer(self);
 
@@ -111,6 +112,10 @@ impl Peer for PeerLocal {
 
     fn subscriber(&self) -> Option<Arc<Mutex<Subscriber>>> {
         self.subscriber.clone()
+    }
+
+    fn publisher(&self) -> Option<Arc<Mutex<Publisher>>> {
+        self.publisher.clone()
     }
 
     // fn as_peer(&self) -> &(dyn Peer + Send + Sync) {

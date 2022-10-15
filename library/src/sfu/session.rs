@@ -33,12 +33,12 @@ pub type OnCloseFn =
 #[async_trait]
 pub trait Session {
     fn id(&self) -> String;
-    fn publish(
+    async fn publish(
         &mut self,
         router: Arc<Mutex<dyn Router + Send + Sync>>,
         r: Arc<Mutex<dyn Receiver + Send + Sync>>,
     );
-    fn subscribe(&mut self, peer: Arc<dyn Peer + Send + Sync>);
+    async fn subscribe(&mut self, peer: Arc<dyn Peer + Send + Sync>);
     fn add_peer(&mut self, peer: Arc<dyn Peer + Send + Sync>);
     fn get_peer(&self, peer_id: String) -> Option<Arc<dyn Peer + Send + Sync>>;
     async fn remove_peer(&mut self, peer: Arc<dyn Peer + Send + Sync>);
@@ -49,8 +49,8 @@ pub trait Session {
     ) -> Result<String>;
     fn audio_obserber(&mut self) -> Option<&mut AudioObserver>;
 
-    fn add_data_channel(&mut self, owner: String, dc: Arc<RTCDataChannel>);
-    fn get_data_channel_middlewares(&self) -> Vec<Arc<Mutex<DataChannel>>>;
+    async fn add_data_channel(&mut self, owner: String, dc: Arc<RTCDataChannel>);
+    fn get_data_channel_middlewares(&self) -> Vec<Arc<DataChannel>>;
     fn get_fanout_data_channel_labels(&self) -> Vec<String>;
     async fn get_data_channels(&self, peer_id: String, label: String) -> Vec<Arc<RTCDataChannel>>;
     async fn fanout_message(&self, origin: String, label: String, msg: DataChannelMessage);
@@ -68,7 +68,7 @@ pub struct SessionLocal {
     closed: AtomicBool,
     audio_observer: Option<AudioObserver>,
     fanout_data_channels: Vec<String>,
-    data_channels: Vec<Arc<Mutex<DataChannel>>>,
+    data_channels: Vec<Arc<DataChannel>>,
     on_close_handler: Arc<Mutex<Option<OnCloseFn>>>,
 }
 
@@ -123,6 +123,27 @@ impl SessionLocal {
         }
     }
 
+    async fn on_close(&mut self, f: OnCloseFn) {
+        let mut handler = self.on_close_handler.lock().await;
+        *handler = Some(f);
+    }
+
+    async fn fanout_message(data_channels: Vec<Arc<RTCDataChannel>>, msg: DataChannelMessage) {
+        // let data_channels = self.get_data_channels(origin, label).await;
+
+        for dc in data_channels {
+            let s = match str::from_utf8(msg.data.as_ref()) {
+                Ok(v) => v,
+                Err(e) => panic!("Invalid UTF-8 sequence: {}", e),
+            };
+            if msg.is_string {
+                dc.send_text(s.to_string()).await;
+            } else {
+                dc.send(&msg.data).await;
+            }
+        }
+    }
+
     async fn audio_level_observer(&mut self, audio_level_interval: i32) -> Result<()> {
         let mut audio_level_interval_new: u64 = audio_level_interval as u64;
         if audio_level_interval_new == 0 {
@@ -171,7 +192,7 @@ impl Session for SessionLocal {
         self.audio_observer.as_mut()
     }
 
-    fn get_data_channel_middlewares(&self) -> Vec<Arc<Mutex<DataChannel>>> {
+    fn get_data_channel_middlewares(&self) -> Vec<Arc<DataChannel>> {
         self.data_channels.clone()
     }
 
@@ -186,20 +207,6 @@ impl Session for SessionLocal {
     fn get_peer(&self, peer_id: String) -> Option<Arc<dyn Peer + Send + Sync>> {
         let rv = self.peers.get(&peer_id).unwrap().clone();
         Some(rv)
-    }
-
-    async fn remove_peer(&mut self, peer: Arc<dyn Peer + Send + Sync>) {
-        let id = peer.id();
-
-        if let Some(p) = self.peers.get(&id) {
-            self.peers.remove(&id);
-        }
-
-        let peer_count = self.peers.len() + self.relay_peers.lock().await.len();
-
-        if peer_count == 0 {
-            self.close().await;
-        }
     }
 
     async fn add_relay_peer(
@@ -254,29 +261,164 @@ impl Session for SessionLocal {
         Ok(resp)
     }
 
-    fn add_data_channel(&mut self, owner: String, dc: Arc<RTCDataChannel>) {
+    async fn remove_peer(&mut self, peer: Arc<dyn Peer + Send + Sync>) {
+        let id = peer.id();
+
+        if let Some(p) = self.peers.get(&id) {
+            self.peers.remove(&id);
+        }
+
+        let peer_count = self.peers.len() + self.relay_peers.lock().await.len();
+        if peer_count == 0 {
+            self.close().await;
+        }
+    }
+
+    async fn add_data_channel(&mut self, owner: String, dc: Arc<RTCDataChannel>) {
         let label = dc.label().to_string();
 
-        //let s = self.clone();
-        let owner_out = owner.clone();
+        let data_channels_out = self.get_data_channels(owner.clone(), label.clone()).await;
 
         for lbl in &self.fanout_data_channels {
             if label == lbl.clone() {
-                // dc.on_message(Box::new(move |msg: DataChannelMessage| {
-                //     let owner_in = owner_out.clone();
-                //     Box::pin(async move {
-                //         s.fanout_message(owner_in, label.to_string(), msg);
-                //     })
-                // }));
+                dc.on_message(Box::new(move |msg: DataChannelMessage| {
+                    let data_channels_in = data_channels_out.clone();
+                    Box::pin(async move {
+                        SessionLocal::fanout_message(data_channels_in, msg).await;
+                    })
+                }))
+                .await;
                 return;
             }
         }
 
-        self.fanout_data_channels.push(label);
+        self.fanout_data_channels.push(label.clone());
+
         let peer_owner = self.peers.get(&owner).unwrap();
-        let sub = peer_owner.subscriber().unwrap();
-        // sub.re
-        let peers = self.peers();
+        if let Some(subscriber) = peer_owner.subscriber() {
+            subscriber
+                .lock()
+                .await
+                .register_data_channel(label.clone(), dc.clone());
+        }
+
+        let data_channels_out_2 = data_channels_out.clone();
+
+        dc.on_message(Box::new(move |msg: DataChannelMessage| {
+            let data_channels_in = data_channels_out.clone();
+            Box::pin(async move {
+                SessionLocal::fanout_message(data_channels_in, msg).await;
+            })
+        }))
+        .await;
+
+        for peer in &self.peers() {
+            if peer.id() == owner || peer.subscriber().is_none() {
+                continue;
+            }
+
+            if let Some(publisher) = peer.publisher() {
+                let p = publisher.lock().await;
+                if p.relayed() {
+                    //todo
+                }
+            }
+
+            if let Ok(channel) = peer
+                .subscriber()
+                .unwrap()
+                .lock()
+                .await
+                .add_data_channel_2(label.clone())
+                .await
+            {
+                let data_channels_out_3 = data_channels_out_2.clone();
+                channel
+                    .on_message(Box::new(move |msg: DataChannelMessage| {
+                        let data_channels_in = data_channels_out_3.clone();
+                        Box::pin(async move {
+                            SessionLocal::fanout_message(data_channels_in, msg).await;
+                        })
+                    }))
+                    .await;
+                //todo
+            } else {
+                continue;
+            }
+
+            peer.subscriber().unwrap().lock().await.negotiate().await;
+        }
+    }
+
+    async fn publish(
+        &mut self,
+        router: Arc<Mutex<dyn Router + Send + Sync>>,
+        r: Arc<Mutex<dyn Receiver + Send + Sync>>,
+    ) {
+        let mut router_val = router.lock().await;
+        for peer in self.peers() {
+            if router_val.id() == peer.id() || peer.subscriber().is_none() {
+                continue;
+            }
+
+            if router_val
+                .add_down_tracks(peer.subscriber().unwrap(), Some(r.clone()))
+                .await
+                .is_err()
+            {
+                continue;
+            }
+        }
+    }
+    async fn subscribe(&mut self, peer: Arc<dyn Peer + Send + Sync>) {
+        for label in &self.fanout_data_channels {
+            if let Some(sub) = peer.subscriber() {
+                match sub.lock().await.add_data_channel_2(label.clone()).await {
+                    Ok(dc) => {
+                        let data_channels_out =
+                            self.get_data_channels(peer.id(), label.clone()).await;
+
+                        dc.on_message(Box::new(move |msg: DataChannelMessage| {
+                            let data_channels_in = data_channels_out.clone();
+                            Box::pin(async move {
+                                SessionLocal::fanout_message(data_channels_in, msg).await;
+                            })
+                        }))
+                        .await;
+                        //todo
+                    }
+
+                    Err(_) => {
+                        continue;
+                    }
+                }
+            }
+        }
+
+        for (_, cur_peer) in &self.peers {
+            if cur_peer.id() == peer.id() || cur_peer.publisher().is_none() {
+                continue;
+            }
+
+            let router = cur_peer.publisher().unwrap().lock().await.get_router();
+            if router
+                .lock()
+                .await
+                .add_down_tracks(peer.subscriber().unwrap(), None)
+                .await
+                .is_err()
+            {
+                continue;
+            }
+        }
+
+        //todo
+        peer.subscriber().unwrap().lock().await.negotiate().await;
+    }
+
+    async fn fanout_message(&self, origin: String, label: String, msg: DataChannelMessage) {
+        let data_channels = self.get_data_channels(origin, label).await;
+        SessionLocal::fanout_message(data_channels, msg).await;
     }
 
     async fn get_data_channels(&self, peer_id: String, label: String) -> Vec<Arc<RTCDataChannel>> {
@@ -306,21 +448,6 @@ impl Session for SessionLocal {
         data_channels
     }
 
-    async fn fanout_message(&self, origin: String, label: String, msg: DataChannelMessage) {
-        let data_channels = self.get_data_channels(origin, label).await;
-
-        for dc in data_channels {
-            let s = match str::from_utf8(msg.data.as_ref()) {
-                Ok(v) => v,
-                Err(e) => panic!("Invalid UTF-8 sequence: {}", e),
-            };
-            if msg.is_string {
-                dc.send_text(s.to_string()).await;
-            } else {
-                dc.send(&msg.data).await;
-            }
-        }
-    }
     fn peers(&self) -> Vec<Arc<dyn Peer + Send + Sync>> {
         let mut peers: Vec<Arc<dyn Peer + Send + Sync>> = Vec::new();
         for (k, v) in &self.peers {
@@ -335,12 +462,4 @@ impl Session for SessionLocal {
         }
         relay_peers
     }
-
-    fn publish(
-        &mut self,
-        router: Arc<Mutex<dyn Router + Send + Sync>>,
-        r: Arc<Mutex<dyn Receiver + Send + Sync>>,
-    ) {
-    }
-    fn subscribe(&mut self, peer: Arc<dyn Peer + Send + Sync>) {}
 }
