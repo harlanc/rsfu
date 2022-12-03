@@ -60,7 +60,8 @@ pub trait Peer {
     // fn as_peer(&self) -> &(dyn Peer + Send + Sync);
 }
 
-struct JoinConfig {
+#[derive(Clone, Default)]
+pub struct JoinConfig {
     pub no_publish: bool,
     pub no_subscribe: bool,
     pub no_auto_subscribe: bool,
@@ -85,7 +86,7 @@ pub struct ChannelAPIMessage {
 }
 
 // #[derive(Default)]
-struct PeerLocal {
+pub struct PeerLocal {
     id: String,
     session: Option<Arc<Mutex<dyn Session + Send + Sync>>>,
     closed: Arc<AtomicBool>,
@@ -93,8 +94,8 @@ struct PeerLocal {
     publisher: Option<Arc<Mutex<Publisher>>>,
     subscriber: Option<Arc<Mutex<Subscriber>>>,
 
-    on_offer_handler: Arc<Mutex<Option<OnOfferFn>>>,
-    on_ice_candidate: Arc<Mutex<Option<OnIceCandidateFn>>>,
+    pub on_offer_handler: Arc<Mutex<Option<OnOfferFn>>>,
+    pub on_ice_candidate_handler: Arc<Mutex<Option<OnIceCandidateFn>>>,
     on_ice_connection_state_change: Arc<Mutex<Option<OnIceConnectionStateChangeFn>>>,
 
     remote_answer_pending: Arc<AtomicBool>,
@@ -165,7 +166,7 @@ impl PeerLocal {
             subscriber: None,
 
             on_offer_handler: Arc::new(Mutex::new(None)),
-            on_ice_candidate: Arc::new(Mutex::new(None)),
+            on_ice_candidate_handler: Arc::new(Mutex::new(None)),
             on_ice_connection_state_change: Arc::new(Mutex::new(None)),
 
             remote_answer_pending: Arc::new(AtomicBool::new(false)),
@@ -190,7 +191,17 @@ impl PeerLocal {
         }
     }
 
-    async fn join(&mut self, sid: String, uid: String, cfg: JoinConfig) -> Result<()> {
+    pub async fn on_offer(&self, f: OnOfferFn) {
+        let mut handler = self.on_offer_handler.lock().await;
+        *handler = Some(f);
+    }
+
+    pub async fn on_ice_candidate(&self, f: OnIceCandidateFn) {
+        let mut handler = self.on_ice_candidate_handler.lock().await;
+        *handler = Some(f);
+    }
+
+    pub async fn join(&mut self, sid: String, uid: String, cfg: JoinConfig) -> Result<()> {
         if !self.session.is_none() {
             return Err(Error::ErrTransportExists.into());
         }
@@ -263,7 +274,7 @@ impl PeerLocal {
                 }))
                 .await;
 
-            let on_ice_candidate_out = self.on_ice_candidate.clone();
+            let on_ice_candidate_out = self.on_ice_candidate_handler.clone();
             let closed_out_1 = self.closed.clone();
             subscriber
                 .lock()
@@ -308,7 +319,7 @@ impl PeerLocal {
                 }
             }
 
-            let on_ice_candidate_out = self.on_ice_candidate.clone();
+            let on_ice_candidate_out = self.on_ice_candidate_handler.clone();
             let closed_out_1 = self.closed.clone();
 
             publisher
@@ -357,7 +368,7 @@ impl PeerLocal {
         Ok(())
     }
 
-    async fn answer(&mut self, sdp: RTCSessionDescription) -> Result<RTCSessionDescription> {
+    pub async fn answer(&mut self, sdp: RTCSessionDescription) -> Result<RTCSessionDescription> {
         if let Some(publisher) = &self.publisher {
             if publisher.lock().await.signaling_state() != RTCSignalingState::Stable {
                 return Err(Error::ErrOfferIgnored.into());
@@ -369,7 +380,7 @@ impl PeerLocal {
         }
     }
 
-    async fn set_remote_description(&mut self, sdp: RTCSessionDescription) -> Result<()> {
+    pub async fn set_remote_description(&mut self, sdp: RTCSessionDescription) -> Result<()> {
         if let Some(subscriber) = &self.subscriber {
             subscriber.lock().await.set_remote_description(sdp).await?;
             self.remote_answer_pending.store(false, Ordering::Relaxed);
@@ -385,7 +396,7 @@ impl PeerLocal {
         Ok(())
     }
 
-    async fn trickle(&mut self, candidate: RTCIceCandidateInit, target: u8) -> Result<()> {
+    pub async fn trickle(&mut self, candidate: RTCIceCandidateInit, target: u8) -> Result<()> {
         if self.subscriber.is_none() || self.publisher.is_none() {
             return Err(Error::ErrNoTransportEstablished.into());
         }

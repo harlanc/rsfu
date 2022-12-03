@@ -1,0 +1,51 @@
+[package]
+name = "rsfu-jrpc-server"
+description = "rsfu signal server using json-rpc2.0"
+version = "0.0.1"
+authors = ["HarlanC <wawacry@qq.com"]
+repository = "https://github.com/harlanc/rsfu"
+license = "MIT"
+readme = "README.md"
+categories = ["multimedia", "multimedia::video", 'multimedia::audio']
+keywords = ["rtmp", "hls", "httpflv", "video", "streaming"]
+edition = "2018"
+[dependencies]
+toml = "0.5.8"
+serde_derive = "1.0"
+serde = { version = "1.0.101", optional = true, features = ["derive"] }
+anyhow = "^1.0"
+log = "0.4.0"
+env_logger = "0.9.0"
+flexi_logger = "0.18"
+chrono = "0.4"
+failure = "0.1.1"
+rsfu = {path = "../../rsfu/"}#"0.0.4"
+jrpc2 = "0.2.2"
+uuid = "1.2.1"
+bytesio = "0.1.27"
+rtcp = "0.7.0"
+rtp = "0.6.7"
+sdp = "0.5.2"
+turn = "0.6.0"
+webrtc = "0.5.1"
+webrtc-ice = "0.8.1"
+byteorder = "1.4.2"
+thiserror = "1.0.25"
+async-trait = "0.1.51"
+
+
+bytes = "1.1.0"
+interceptor = "0.8.0"
+webrtc-util =  "0.6.0"
+
+
+
+[features]
+default = ["std"]
+std = [ "serde" ]
+
+[dependencies.tokio]
+version = "1.4.0"
+default-features = false
+#features = ["rt-core", "rt-threaded", "macros", "time","sync"]
+features = ["full"]

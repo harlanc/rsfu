@@ -1,5 +1,5 @@
 [package]
-name = "sfubuffer"
+name = "rsfu"
 description = "sfu buffer library."
 version = "0.0.4"
 authors = ["HarlanC <wawacry@qq.com"]

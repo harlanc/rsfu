@@ -76,7 +76,7 @@ struct Config {
 }
 
 #[derive(Default)]
-struct SFU {
+pub struct SFU {
     webrtc: Arc<WebRTCTransportConfig>,
     turn: Option<TurnServer>,
     sessions: HashMap<String, Arc<Mutex<dyn Session + Send + Sync>>>,
