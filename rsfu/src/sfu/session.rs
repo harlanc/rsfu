@@ -56,6 +56,7 @@ pub trait Session {
     async fn fanout_message(&self, origin: String, label: String, msg: DataChannelMessage);
     fn peers(&self) -> Vec<Arc<Mutex<dyn Peer + Send + Sync>>>;
     async fn relay_peers(&self) -> Vec<Arc<RelayPeer>>;
+    async fn on_close(&mut self, f: OnCloseFn);
 
     // fn subscribe()
 }
@@ -120,11 +121,6 @@ impl SessionLocal {
         if let Some(f) = &mut *close_handler {
             f().await;
         }
-    }
-
-    pub async fn on_close(&mut self, f: OnCloseFn) {
-        let mut handler = self.on_close_handler.lock().await;
-        *handler = Some(f);
     }
 
     async fn fanout_message(data_channels: Vec<Arc<RTCDataChannel>>, msg: DataChannelMessage) {
@@ -200,7 +196,8 @@ impl Session for SessionLocal {
     }
 
     async fn add_peer(&mut self, peer: Arc<Mutex<dyn Peer + Send + Sync>>) {
-        self.peers.insert(peer.lock().await.id(), peer);
+        let id = peer.lock().await.id();
+        self.peers.insert(id, peer);
     }
 
     fn get_peer(&self, peer_id: String) -> Option<Arc<Mutex<dyn Peer + Send + Sync>>> {
@@ -463,5 +460,10 @@ impl Session for SessionLocal {
             relay_peers.push(v.clone());
         }
         relay_peers
+    }
+
+    async fn on_close(&mut self, f: OnCloseFn) {
+        let mut handler = self.on_close_handler.lock().await;
+        *handler = Some(f);
     }
 }

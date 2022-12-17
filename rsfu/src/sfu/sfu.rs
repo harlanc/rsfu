@@ -221,11 +221,24 @@ impl SFU {
     }
 
     async fn new_session(&self, id: String) -> Arc<Mutex<dyn Session + Send + Sync>> {
-        let session = SessionLocal::new(id, self.data_channels, self.webrtc).await;
-        let s = session.lock().await;
+        let session =
+            SessionLocal::new(id.clone(), self.data_channels.clone(), self.webrtc.clone()).await;
 
-        s.on_close(Box::new(move || Box::pin(async move { Ok(()) })))
+        let sessions_out = self.sessions.clone();
+        let id_out = id.clone();
+        session
+            .lock()
+            .await
+            .on_close(Box::new(move || {
+                let sessions_in = sessions_out.clone();
+                let id_in = id_out.clone();
+                Box::pin(async move {
+                    sessions_in.lock().await.remove(&id_in);
+                })
+            }))
             .await;
+
+        self.sessions.lock().await.insert(id, session.clone());
 
         session
     }
@@ -246,8 +259,7 @@ impl SessionProvider for SFU {
         Option<Arc<Mutex<dyn Session + Send + Sync>>>,
         Arc<WebRTCTransportConfig>,
     ) {
-        let s = self.sessions.lock().await.get(&sid);
-        match s {
+        match self.sessions.lock().await.get(&sid) {
             Some(val) => return (Some(val.clone()), self.webrtc.clone()),
             None => return (None, self.webrtc.clone()),
         }
