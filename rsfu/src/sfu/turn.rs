@@ -28,12 +28,12 @@ pub const TURN_MAX_PORT: u16 = 46883;
 
 pub const SFU_MIN_PORT: u16 = 46884;
 pub const SFU_MAX_PORT: u16 = 60999;
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub(super) struct TurnAuth {
     credentials: String,
     secret: String,
 }
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub(super) struct TurnConfig {
     pub(super) enabled: bool,
     realm: String,

@@ -27,6 +27,8 @@ pub struct ProcessArgs {
 pub trait MessageProcessor {
     fn process(&mut self, args: ProcessArgs);
 }
+
+#[derive(Default)]
 pub struct DataChannel {
     pub label: String,
     pub middlewares: Arc<
@@ -63,6 +65,12 @@ pub struct ChainHandler {
 }
 
 impl DataChannel {
+    pub fn new(label: String) -> Self {
+        Self {
+            label,
+            ..Default::default()
+        }
+    }
     fn use_middleware(
         &mut self,
         f: fn(Arc<Mutex<dyn MessageProcessor + Send>>) -> Arc<Mutex<dyn MessageProcessor + Send>>,

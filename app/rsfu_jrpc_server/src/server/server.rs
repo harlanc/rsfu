@@ -21,7 +21,7 @@ use std::sync::Arc;
 pub struct Join {
     #[serde(rename = "sid")]
     sid: String,
-    #[serde(rename = "uid")]
+    #[serde(rename = "uid", default)]
     uid: String,
     #[serde(rename = "offer")]
     offer: RTCSessionDescription,
@@ -43,8 +43,8 @@ pub struct Trickle {
     candidate: RTCIceCandidateInit,
 }
 
-struct JsonSignal {
-    peer_local: PeerLocal,
+pub struct JsonSignal {
+    pub peer_local: PeerLocal,
 }
 
 impl JsonSignal {
@@ -83,6 +83,7 @@ impl THandler<RequestParams, ResponseResult, ErrorData> for JsonSignal {
                 log::error!("response error: {}", err);
             }
         };
+        log::error!("infoinfo");
         match request.method.as_str() {
             "join" => {
                 let mut join_param: Option<Join> = None;
@@ -128,7 +129,11 @@ impl THandler<RequestParams, ResponseResult, ErrorData> for JsonSignal {
 
                 let join = join_param.unwrap();
 
-                if let Err(err) = self.peer_local.join(join.sid, join.uid, join.config).await {
+                if let Err(err) = self
+                    .peer_local
+                    .join(join.sid, String::from(""), join.config)
+                    .await
+                {
                     response_error("join err");
                     log::error!("join err: {}", err);
                     return;

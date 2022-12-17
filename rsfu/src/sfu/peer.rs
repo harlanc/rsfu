@@ -67,8 +67,9 @@ pub struct JoinConfig {
     pub no_auto_subscribe: bool,
 }
 
+#[async_trait]
 pub trait SessionProvider {
-    fn get_session(
+    async fn get_session(
         &mut self,
         sid: String,
     ) -> (
@@ -124,40 +125,40 @@ impl Peer for PeerLocal {
     // }
 }
 
-fn NewPeer() //-> (impl Peer + Send + Sync)
-{
-    //     let p = PeerLocal::new(Arc::new(Mutex::new(SProvider::new())));
+// fn NewPeer() //-> (impl Peer + Send + Sync)
+// {
+//     //     let p = PeerLocal::new(Arc::new(Mutex::new(SProvider::new())));
 
-    //     p
+//     //     p
 
-    let p = Arc::new(PeerLocal::new(Arc::new(Mutex::new(SProvider::new()))));
+//     let p = Arc::new(PeerLocal::new(Arc::new(Mutex::new(SProvider::new()))));
 
-    let a = Arc::clone(&p) as Arc<dyn Peer + Send + Sync>;
-}
+//     let a = Arc::clone(&p) as Arc<dyn Peer + Send + Sync>;
+// }
 
-struct SProvider {}
+// struct SProvider {}
 
-impl SProvider {
-    fn new() -> Self {
-        SProvider {}
-    }
-}
+// impl SProvider {
+//     fn new() -> Self {
+//         SProvider {}
+//     }
+// }
 
-impl SessionProvider for SProvider {
-    fn get_session(
-        &mut self,
-        sid: String,
-    ) -> (
-        Option<Arc<Mutex<dyn Session + Send + Sync>>>,
-        Arc<WebRTCTransportConfig>,
-    ) {
-        return (None, Arc::new(WebRTCTransportConfig::default()));
-    }
-}
+// impl SessionProvider for SProvider {
+//     async fn get_session(
+//         &mut self,
+//         sid: String,
+//     ) -> (
+//         Option<Arc<Mutex<dyn Session + Send + Sync>>>,
+//         Arc<WebRTCTransportConfig>,
+//     ) {
+//         return (None, Arc::new(WebRTCTransportConfig::default()));
+//     }
+// }
 
 impl PeerLocal {
-    fn new(provider: Arc<Mutex<dyn SessionProvider + Send + Sync>>) -> Self {
-        PeerLocal {
+    pub fn new(provider: Arc<Mutex<dyn SessionProvider + Send + Sync>>) -> Self {
+        let peer_local = PeerLocal {
             id: String::from(""),
             session: None,
             closed: Arc::new(AtomicBool::new(false)),
@@ -171,25 +172,27 @@ impl PeerLocal {
 
             remote_answer_pending: Arc::new(AtomicBool::new(false)),
             negotiation_pending: Arc::new(AtomicBool::new(false)),
-        }
+        };
+
+        peer_local
     }
 
-    async fn join_after(self: &Arc<Self>) {
-        // let s = Arc::new(Box::new(self) as Box<dyn Peer + Send + Sync>);
+    // pub async fn join_after(self: &Arc<Mutex<Self>>) {
+    //     // let s = Arc::new(Box::new(self) as Box<dyn Peer + Send + Sync>);
 
-        // let session = self.session.take();
-        if let Some(session) = &self.session {
-            session
-                .lock()
-                .await
-                .add_peer(Arc::clone(self) as Arc<dyn Peer + Send + Sync>); //as &Arc<dyn Peer + Send + Sync>));
+    //     // let session = self.session.take();
+    //     if let Some(session) = &self.session {
+    //         session
+    //             .lock()
+    //             .await
+    //             .add_peer(Arc::clone(self) as Arc<dyn Peer + Send + Sync>); //as &Arc<dyn Peer + Send + Sync>));
 
-            session
-                .lock()
-                .await
-                .subscribe(Arc::clone(self) as Arc<dyn Peer + Send + Sync>);
-        }
-    }
+    //         session
+    //             .lock()
+    //             .await
+    //             .subscribe(Arc::clone(self) as Arc<dyn Peer + Send + Sync>);
+    //     }
+    // }
 
     pub async fn on_offer(&self, f: OnOfferFn) {
         let mut handler = self.on_offer_handler.lock().await;
@@ -213,7 +216,7 @@ impl PeerLocal {
 
         self.id = uuid;
 
-        let (s, webrtc_transport_cfg) = self.provider.lock().await.get_session(sid);
+        let (s, webrtc_transport_cfg) = self.provider.lock().await.get_session(sid).await;
 
         let rtc_config_clone = RTCConfiguration {
             ice_servers: webrtc_transport_cfg.configuration.ice_servers.clone(),
@@ -311,9 +314,10 @@ impl PeerLocal {
 
             if !cfg.no_subscribe {
                 let session = self.session.as_ref().unwrap().lock().await;
-                for dc in session.get_data_channel_middlewares() {
+                //let data_channels =;
+                for dc in  &*session.get_data_channel_middlewares().lock().await {
                     if let Some(subscriber) = &self.subscriber {
-                        subscriber.lock().await.add_data_channel(dc).await?;
+                        subscriber.lock().await.add_data_channel(dc.clone()).await?;
                     }
                     // let subscriber = self.subscriber.unwrap().lock().await;
                 }

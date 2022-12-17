@@ -39,8 +39,8 @@ pub trait Session {
         r: Arc<Mutex<dyn Receiver + Send + Sync>>,
     );
     async fn subscribe(&mut self, peer: Arc<dyn Peer + Send + Sync>);
-    fn add_peer(&mut self, peer: Arc<dyn Peer + Send + Sync>);
-    fn get_peer(&self, peer_id: String) -> Option<Arc<dyn Peer + Send + Sync>>;
+    async fn add_peer(&mut self, peer: Arc<Mutex<dyn Peer + Send + Sync>>);
+    fn get_peer(&self, peer_id: String) -> Option<Arc<Mutex<dyn Peer + Send + Sync>>>;
     async fn remove_peer(&mut self, peer: Arc<dyn Peer + Send + Sync>);
     async fn add_relay_peer(
         self: Arc<Self>,
@@ -50,11 +50,11 @@ pub trait Session {
     fn audio_obserber(&mut self) -> Option<&mut AudioObserver>;
 
     async fn add_data_channel(&mut self, owner: String, dc: Arc<RTCDataChannel>);
-    fn get_data_channel_middlewares(&self) -> Vec<Arc<DataChannel>>;
+    fn get_data_channel_middlewares(&self) -> Arc<Mutex<Vec<Arc<DataChannel>>>>;
     fn get_fanout_data_channel_labels(&self) -> Vec<String>;
     async fn get_data_channels(&self, peer_id: String, label: String) -> Vec<Arc<RTCDataChannel>>;
     async fn fanout_message(&self, origin: String, label: String, msg: DataChannelMessage);
-    fn peers(&self) -> Vec<Arc<dyn Peer + Send + Sync>>;
+    fn peers(&self) -> Vec<Arc<Mutex<dyn Peer + Send + Sync>>>;
     async fn relay_peers(&self) -> Vec<Arc<RelayPeer>>;
 
     // fn subscribe()
@@ -63,19 +63,19 @@ pub trait Session {
 pub struct SessionLocal {
     id: String,
     config: Arc<WebRTCTransportConfig>,
-    peers: HashMap<String, Arc<dyn Peer + Send + Sync>>,
+    peers: HashMap<String, Arc<Mutex<dyn Peer + Send + Sync>>>,
     relay_peers: Arc<Mutex<HashMap<String, Arc<RelayPeer>>>>,
     closed: AtomicBool,
     audio_observer: Option<AudioObserver>,
     fanout_data_channels: Vec<String>,
-    data_channels: Vec<Arc<DataChannel>>,
+    data_channels: Arc<Mutex<Vec<Arc<DataChannel>>>>,
     on_close_handler: Arc<Mutex<Option<OnCloseFn>>>,
 }
 
 impl SessionLocal {
     pub async fn new(
         id: String,
-        dcs: Vec<Option<DataChannel>>,
+        dcs: Arc<Mutex<Vec<Arc<DataChannel>>>>,
         config: Arc<WebRTCTransportConfig>,
     ) -> Arc<Mutex<dyn Session + Send + Sync>> {
         let s = SessionLocal {
@@ -86,7 +86,7 @@ impl SessionLocal {
             closed: AtomicBool::new(false),
             audio_observer: None,
             fanout_data_channels: Vec::new(),
-            data_channels: Vec::new(),
+            data_channels: dcs,
             on_close_handler: Arc::new(Mutex::new(None)),
         };
 
@@ -117,13 +117,12 @@ impl SessionLocal {
         self.closed.store(true, Ordering::Relaxed);
 
         let mut close_handler = self.on_close_handler.lock().await;
-
         if let Some(f) = &mut *close_handler {
             f().await;
         }
     }
 
-    async fn on_close(&mut self, f: OnCloseFn) {
+    pub async fn on_close(&mut self, f: OnCloseFn) {
         let mut handler = self.on_close_handler.lock().await;
         *handler = Some(f);
     }
@@ -192,7 +191,7 @@ impl Session for SessionLocal {
         self.audio_observer.as_mut()
     }
 
-    fn get_data_channel_middlewares(&self) -> Vec<Arc<DataChannel>> {
+    fn get_data_channel_middlewares(&self) -> Arc<Mutex<Vec<Arc<DataChannel>>>> {
         self.data_channels.clone()
     }
 
@@ -200,11 +199,11 @@ impl Session for SessionLocal {
         self.fanout_data_channels.clone()
     }
 
-    fn add_peer(&mut self, peer: Arc<dyn Peer + Send + Sync>) {
-        self.peers.insert(peer.id(), peer);
+    async fn add_peer(&mut self, peer: Arc<Mutex<dyn Peer + Send + Sync>>) {
+        self.peers.insert(peer.lock().await.id(), peer);
     }
 
-    fn get_peer(&self, peer_id: String) -> Option<Arc<dyn Peer + Send + Sync>> {
+    fn get_peer(&self, peer_id: String) -> Option<Arc<Mutex<dyn Peer + Send + Sync>>> {
         let rv = self.peers.get(&peer_id).unwrap().clone();
         Some(rv)
     }
@@ -295,7 +294,7 @@ impl Session for SessionLocal {
         self.fanout_data_channels.push(label.clone());
 
         let peer_owner = self.peers.get(&owner).unwrap();
-        if let Some(subscriber) = peer_owner.subscriber() {
+        if let Some(subscriber) = peer_owner.lock().await.subscriber() {
             subscriber
                 .lock()
                 .await
@@ -312,7 +311,8 @@ impl Session for SessionLocal {
         }))
         .await;
 
-        for peer in &self.peers() {
+        for peer_mutex in &self.peers() {
+            let peer = peer_mutex.lock().await;
             if peer.id() == owner || peer.subscriber().is_none() {
                 continue;
             }
@@ -356,7 +356,8 @@ impl Session for SessionLocal {
         r: Arc<Mutex<dyn Receiver + Send + Sync>>,
     ) {
         let mut router_val = router.lock().await;
-        for peer in self.peers() {
+        for peer_mutex in self.peers() {
+            let peer = peer_mutex.lock().await;
             if router_val.id() == peer.id() || peer.subscriber().is_none() {
                 continue;
             }
@@ -395,7 +396,8 @@ impl Session for SessionLocal {
             }
         }
 
-        for (_, cur_peer) in &self.peers {
+        for (_, cur_peer_mutex) in &self.peers {
+            let cur_peer = cur_peer_mutex.lock().await;
             if cur_peer.id() == peer.id() || cur_peer.publisher().is_none() {
                 continue;
             }
@@ -429,7 +431,7 @@ impl Session for SessionLocal {
                 continue;
             }
 
-            if let Some(sub) = v.subscriber() {
+            if let Some(sub) = v.lock().await.subscriber() {
                 if let Some(dc) = sub.lock().await.data_channel(label.clone()) {
                     if dc.ready_state() == RTCDataChannelState::Open {
                         data_channels.push(dc);
@@ -448,8 +450,8 @@ impl Session for SessionLocal {
         data_channels
     }
 
-    fn peers(&self) -> Vec<Arc<dyn Peer + Send + Sync>> {
-        let mut peers: Vec<Arc<dyn Peer + Send + Sync>> = Vec::new();
+    fn peers(&self) -> Vec<Arc<Mutex<dyn Peer + Send + Sync>>> {
+        let mut peers: Vec<Arc<Mutex<dyn Peer + Send + Sync>>> = Vec::new();
         for (k, v) in &self.peers {
             peers.push(v.clone());
         }

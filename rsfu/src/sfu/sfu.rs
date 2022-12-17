@@ -6,7 +6,7 @@ use webrtc::api::setting_engine::SettingEngine;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 
 use super::data_channel::DataChannel;
-use super::session::Session;
+use super::session::{Session, SessionLocal};
 use anyhow::Result;
 use bytes::BytesMut;
 use std::collections::HashMap;
@@ -27,13 +27,15 @@ use webrtc::peer_connection::policy::sdp_semantics::RTCSdpSemantics;
 use webrtc_ice::mdns::MulticastDnsMode;
 use webrtc_ice::udp_mux::*;
 use webrtc_ice::udp_network::*;
+
+use async_trait::async_trait;
 #[derive(Clone)]
 struct ICEServerConfig {
     urls: Vec<String>,
     user_name: String,
     credential: String,
 }
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct Candidates {
     ice_lite: bool,
     nat1_to_1ips: Vec<String>,
@@ -45,13 +47,13 @@ pub struct WebRTCTransportConfig {
     pub Router: RouterConfig,
     pub factory: Arc<Mutex<AtomicFactory>>,
 }
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct WebRTCTimeoutsConfig {
     ice_disconnected_timeout: i32,
     ice_failed_timeout: i32,
     ice_keepalive_interval: i32,
 }
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct WebRTCConfig {
     ice_single_port: i32,
     ice_port_range: Vec<u16>,
@@ -61,13 +63,13 @@ struct WebRTCConfig {
     mdns: bool,
     timeouts: WebRTCTimeoutsConfig,
 }
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct SFUConfig {
     ballast: i64,
     with_stats: bool,
 }
-#[derive(Clone)]
-struct Config {
+#[derive(Clone, Default)]
+pub struct Config {
     sfu: SFUConfig,
     webrtc: WebRTCConfig,
     router: RouterConfig,
@@ -79,8 +81,8 @@ struct Config {
 pub struct SFU {
     webrtc: Arc<WebRTCTransportConfig>,
     turn: Option<TurnServer>,
-    sessions: HashMap<String, Arc<Mutex<dyn Session + Send + Sync>>>,
-    data_channels: Vec<DataChannel>,
+    sessions: Arc<Mutex<HashMap<String, Arc<Mutex<dyn Session + Send + Sync>>>>>,
+    data_channels: Arc<Mutex<Vec<Arc<DataChannel>>>>,
     with_status: bool,
 }
 
@@ -198,14 +200,14 @@ impl WebRTCTransportConfig {
 }
 
 impl SFU {
-    async fn new(c: Config) -> Result<Self> {
+    pub async fn new(c: Config) -> Result<Self> {
         let w = Arc::new(WebRTCTransportConfig::new(&c).await.unwrap());
 
         let with_status = w.Router.with_stats;
 
         let mut sfu = SFU {
             webrtc: w,
-            sessions: HashMap::new(),
+            sessions: Arc::new(Mutex::new(HashMap::new())),
             with_status: with_status,
             ..Default::default()
         };
@@ -217,17 +219,34 @@ impl SFU {
 
         Ok(sfu)
     }
+
+    async fn new_session(&self, id: String) -> Arc<Mutex<dyn Session + Send + Sync>> {
+        let session = SessionLocal::new(id, self.data_channels, self.webrtc).await;
+        let s = session.lock().await;
+
+        s.on_close(Box::new(move || Box::pin(async move { Ok(()) })))
+            .await;
+
+        session
+    }
+
+    async fn new_data_channel(&self, label: String) -> Arc<DataChannel> {
+        let dc = Arc::new(DataChannel::new(label));
+        self.data_channels.lock().await.push(dc.clone());
+        dc
+    }
 }
 
+#[async_trait]
 impl SessionProvider for SFU {
-    fn get_session(
+    async fn get_session(
         &mut self,
         sid: String,
     ) -> (
         Option<Arc<Mutex<dyn Session + Send + Sync>>>,
         Arc<WebRTCTransportConfig>,
     ) {
-        let s = self.sessions.get(&sid);
+        let s = self.sessions.lock().await.get(&sid);
         match s {
             Some(val) => return (Some(val.clone()), self.webrtc.clone()),
             None => return (None, self.webrtc.clone()),

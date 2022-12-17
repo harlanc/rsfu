@@ -20,7 +20,7 @@ flexi_logger = "0.18"
 chrono = "0.4"
 failure = "0.1.1"
 rsfu = {path = "../../rsfu/"}#"0.0.4"
-jrpc2 = "0.2.2"
+jrpc2 =  {path = "../../jsonrpc2-rs/"}#"0.0.4"
 uuid = "1.2.1"
 bytesio = "0.1.27"
 rtcp = "0.7.0"
@@ -32,6 +32,7 @@ webrtc-ice = "0.8.1"
 byteorder = "1.4.2"
 thiserror = "1.0.25"
 async-trait = "0.1.51"
+
 
 
 bytes = "1.1.0"
