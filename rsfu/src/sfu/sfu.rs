@@ -6,7 +6,7 @@ use webrtc::api::setting_engine::SettingEngine;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 
 use super::data_channel::DataChannel;
-use super::session::{Session, SessionLocal};
+use super::session::{self, Session, SessionLocal};
 use anyhow::Result;
 use bytes::BytesMut;
 use std::collections::HashMap;
@@ -81,7 +81,7 @@ pub struct Config {
 pub struct SFU {
     webrtc: Arc<WebRTCTransportConfig>,
     turn: Option<TurnServer>,
-    sessions: Arc<Mutex<HashMap<String, Arc<Mutex<dyn Session + Send + Sync>>>>>,
+    sessions: Arc<Mutex<HashMap<String, Arc<dyn Session + Send + Sync>>>>,
     data_channels: Arc<Mutex<Vec<Arc<DataChannel>>>>,
     with_status: bool,
 }
@@ -220,15 +220,13 @@ impl SFU {
         Ok(sfu)
     }
 
-    async fn new_session(&self, id: String) -> Arc<Mutex<dyn Session + Send + Sync>> {
+    async fn new_session(&self, id: String) -> Arc<dyn Session + Send + Sync> {
         let session =
             SessionLocal::new(id.clone(), self.data_channels.clone(), self.webrtc.clone()).await;
 
         let sessions_out = self.sessions.clone();
         let id_out = id.clone();
         session
-            .lock()
-            .await
             .on_close(Box::new(move || {
                 let sessions_in = sessions_out.clone();
                 let id_in = id_out.clone();
@@ -243,7 +241,7 @@ impl SFU {
         session
     }
 
-    async fn new_data_channel(&self, label: String) -> Arc<DataChannel> {
+    pub async fn new_data_channel(&self, label: String) -> Arc<DataChannel> {
         let dc = Arc::new(DataChannel::new(label));
         self.data_channels.lock().await.push(dc.clone());
         dc
@@ -253,20 +251,17 @@ impl SFU {
 #[async_trait]
 impl SessionProvider for SFU {
     async fn get_session(
-        &mut self,
+        &self,
         sid: String,
     ) -> (
-        Option<Arc<Mutex<dyn Session + Send + Sync>>>,
+        Option<Arc<dyn Session + Send + Sync>>,
         Arc<WebRTCTransportConfig>,
     ) {
-        match self.sessions.lock().await.get(&sid) {
-            Some(val) => return (Some(val.clone()), self.webrtc.clone()),
-            None => return (None, self.webrtc.clone()),
+        if let Some(session) = self.sessions.lock().await.get(&sid) {
+            return (Some(session.clone()), self.webrtc.clone());
         }
-        //  (s.clone(), self.webrtc)
 
-        // if let Some(session) = self.sessions.get(&sid) {
-        //     return (session, self.webrtc);
-        // }
+        let session = self.new_session(sid).await;
+        return (Some(session), self.webrtc.clone());
     }
 }

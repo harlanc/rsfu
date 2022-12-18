@@ -2,7 +2,13 @@ use std::clone;
 use std::fs::OpenOptions;
 
 use bytes::Bytes;
-use rand::Rng;
+// use rand::Rng;
+
+use rand::rngs::StdRng;
+use rand::RngCore;
+use rand::SeedableRng;
+
+// use crate::{RngCore, SeedableRng};
 use rtcp::packet::Packet as RtcpPacket;
 use serde_json::Map;
 use webrtc::api::media_engine::MediaEngine;
@@ -59,6 +65,11 @@ use serde::{Deserialize, Serialize};
 
 const SIGNALER_LABEL: &'static str = "rsfu_relay_signaler";
 const SIGNALER_REQUEST_EVENT: &'static str = "rsfu_relay_request";
+
+const SEED: [u8; 32] = [
+    1, 0, 0, 0, 23, 0, 0, 0, 200, 1, 0, 0, 210, 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0,
+];
 
 //http://technosophos.com/2018/06/12/from-go-to-rust-json-and-yaml.html
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -707,9 +718,10 @@ impl Peer {
     }
 
     async fn emit(&mut self, event: String, payload: Vec<u8>) -> Result<()> {
-        let mut rng = rand::thread_rng();
+        let mut rng0 = StdRng::from_seed(SEED);
+
         let req = Request {
-            id: rng.gen::<u64>(),
+            id: rng0.next_u64(),
             is_reply: false,
             event,
             payload,
@@ -728,9 +740,9 @@ impl Peer {
         event: String,
         payload: Vec<u8>,
     ) -> Result<Vec<u8>> {
-        let mut rng = rand::thread_rng();
+        let mut rng0 = StdRng::from_seed(SEED);
         let req = Request {
-            id: rng.gen::<u64>(),
+            id: rng0.next_u64(),
             is_reply: false,
             event,
             payload,

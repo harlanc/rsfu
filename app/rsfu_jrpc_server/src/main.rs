@@ -21,6 +21,7 @@ async fn main() -> Result<()> {
     env_logger::init();
 
     let sfu = SFU::new(config).await.unwrap();
+    sfu.new_data_channel(String::from("rsfu")).await;
 
     let addr = "127.0.0.1:7000";
     let listener = TcpListener::bind(&addr).await.expect("Can't listen");

@@ -229,7 +229,7 @@ impl Buffer {
         *handler = Some(f);
     }
 
-    pub fn calc(&mut self, pkt: &[u8], arrival_time: i64) {
+    pub async fn calc(&mut self, pkt: &[u8], arrival_time: i64) {
         let sn = BigEndian::read_u16(&pkt[2..4]);
 
         if self.stats.packet_count == 0 {
@@ -365,7 +365,10 @@ impl Buffer {
         if self.twcc {
             if let Some(ext) = packet.header.get_extension(self.twcc_ext) {
                 if ext.len() > 1 {
-                    // feedback
+                    let mut handler = self.on_transport_wide_cc_handler.lock().await;
+                    if let Some(f) = &mut *handler {
+                        //f(data.level).await;
+                    }
                 }
             }
         }
@@ -374,9 +377,12 @@ impl Buffer {
             if let Some(ext) = packet.header.get_extension(self.audio_ext) {
                 let rv = AudioLevelExtension::unmarshal(&mut &ext[..]);
 
-                if let Ok(data) = rv {}
-
-                // audio_ext
+                if let Ok(data) = rv {
+                    let mut handler = self.on_audio_level_handler.lock().await;
+                    if let Some(f) = &mut *handler {
+                        f(data.level).await;
+                    }
+                }
             }
         }
 

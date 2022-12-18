@@ -64,7 +64,7 @@ pub struct Publisher {
     cfg: WebRTCTransportConfig,
 
     router: Arc<Mutex<dyn Router + Send + Sync>>,
-    session: Arc<Mutex<dyn Session + Send + Sync>>,
+    session: Arc<dyn Session + Send + Sync>,
     tracks: Arc<Mutex<Vec<PublisherTrack>>>,
 
     relayed: AtomicBool,
@@ -101,7 +101,7 @@ pub(super) struct PublisherTrack {
 impl Publisher {
     pub async fn new(
         id: String,
-        session: Arc<Mutex<dyn Session + Send + Sync>>,
+        session: Arc<dyn Session + Send + Sync>,
         cfg: WebRTCTransportConfig,
     ) -> Result<Self> {
         let me = media_engine::get_publisher_media_engine().await?;
@@ -198,10 +198,7 @@ impl Publisher {
                                 let receiver_clone = receiver.clone();
 
                                 if publish {
-                                    session_in
-                                        .lock()
-                                        .await
-                                        .publish(router_in2, receiver.clone());
+                                    session_in.publish(router_in2, receiver.clone()).await;
 
                                     tracks_in.lock().await.push(PublisherTrack {
                                         track: track_val_clone,
@@ -220,7 +217,8 @@ impl Publisher {
                                             max_packet_track,
                                             factory_in.clone(),
                                             peer_connection.clone(),
-                                        );
+                                        )
+                                        .await;
                                     }
                                 } else {
                                     tracks_in.lock().await.push(PublisherTrack {
@@ -247,7 +245,8 @@ impl Publisher {
                 }
 
                 Box::pin(async move {
-                    let s = session_in.lock().await;
+                    //todo
+                    //let s = session_in.lock().await;
 
                     // let ss = Arc::new(s);
                     // ss.add_data_channel(peer_id, d);
@@ -357,8 +356,6 @@ impl Publisher {
                     let label_in = label_out.clone();
                     Box::pin(async move {
                         session_in
-                            .lock()
-                            .await
                             .fanout_message(String::from(""), label_in, msg)
                             .await
                     })

@@ -28,7 +28,7 @@ interceptor = "0.8.0"
 webrtc-util =  "0.6.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-rand = "0.3"
+rand = "0.8.5"
 atomic = "0.5"
 prometheus = "0.13.0"
 regex = "1.5"

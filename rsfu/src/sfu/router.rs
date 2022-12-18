@@ -108,7 +108,7 @@ pub struct RouterLocal {
     stop_sender_channel: mpsc::UnboundedSender<()>,
     stop_receiver_channel: mpsc::UnboundedReceiver<()>,
     config: RouterConfig,
-    session: Arc<Mutex<dyn Session + Send + Sync>>,
+    session: Arc<dyn Session + Send + Sync>,
     receivers: Arc<Mutex<HashMap<String, Arc<Mutex<dyn Receiver + Send + Sync>>>>>,
     buffer_factory: AtomicFactory,
     rtcp_writer_handler: Arc<Mutex<Option<RtcpWriterFn>>>,
@@ -116,11 +116,7 @@ pub struct RouterLocal {
     on_del_receiver_track_handler: Arc<Mutex<Option<OnDelReciverTrackFn>>>,
 }
 impl RouterLocal {
-    pub fn new(
-        id: String,
-        session: Arc<Mutex<dyn Session + Send + Sync>>,
-        config: RouterConfig,
-    ) -> Self {
+    pub fn new(id: String, session: Arc<dyn Session + Send + Sync>, config: RouterConfig) -> Self {
         let (s, r) = mpsc::unbounded_channel();
         let (sender, receiver) = mpsc::unbounded_channel();
         Self {
@@ -229,14 +225,14 @@ impl Router for RouterLocal {
                         let session_in = Arc::clone(&session_out);
                         let stream_id_in = stream_id_out.clone();
                         Box::pin(async move {
-                            if let Some(observer) = session_in.lock().await.audio_obserber() {
-                                observer.observe(stream_id_in, level).await;
+                            if let Some(observer) = session_in.audio_obserber() {
+                                observer.lock().await.observe(stream_id_in, level).await;
                             }
                         })
                     }))
                     .await;
-                if let Some(observer) = self.session.lock().await.audio_obserber() {
-                    observer.add_stream(stream_id).await;
+                if let Some(observer) = self.session.audio_obserber() {
+                    observer.lock().await.add_stream(stream_id).await;
                 }
             }
             RTPCodecType::Video => {
@@ -383,8 +379,12 @@ impl Router for RouterLocal {
                         // }
                     }
                     if recv_kind == RTPCodecType::Audio {
-                        if let Some(audio_observer) = session_in.lock().await.audio_obserber() {
-                            audio_observer.remove_stream(stream_id_in).await;
+                        if let Some(audio_observer) = session_in.audio_obserber() {
+                            audio_observer
+                                .lock()
+                                .await
+                                .remove_stream(stream_id_in)
+                                .await;
                         }
                     }
                     delete_receiver(

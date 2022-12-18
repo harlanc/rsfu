@@ -75,6 +75,7 @@ impl THandler<RequestParams, ResponseResult, ErrorData> for JsonSignal {
         json_rpc2: Arc<JsonRpc2<RequestParams, ResponseResult, ErrorData>>,
         request: Request<RequestParams>,
     ) {
+        log::info!("handle begin...");
         let request_id = request.id;
         let response_error = |error_data: &str| {
             let err = Jrpc2Error::new(-1, error_data.to_string(), None);
@@ -83,9 +84,10 @@ impl THandler<RequestParams, ResponseResult, ErrorData> for JsonSignal {
                 log::error!("response error: {}", err);
             }
         };
-        log::error!("infoinfo");
+
         match request.method.as_str() {
             "join" => {
+                log::info!("receive join");
                 let mut join_param: Option<Join> = None;
                 if let Some(Parameters::Join(join)) = request.params {
                     join_param = Some(join);
@@ -94,7 +96,7 @@ impl THandler<RequestParams, ResponseResult, ErrorData> for JsonSignal {
                     response_error("join parameter is none");
                     return;
                 }
-
+                log::info!("receive join1");
                 let rpc2_out_clone = json_rpc2.clone();
                 self.peer_local
                     .on_offer(Box::new(move |offer: RTCSessionDescription| {
@@ -109,7 +111,7 @@ impl THandler<RequestParams, ResponseResult, ErrorData> for JsonSignal {
                         })
                     }))
                     .await;
-
+                log::info!("receive join2");
                 let rpc2_out_clone_2 = json_rpc2.clone();
                 self.peer_local
                     .on_ice_candidate(Box::new(
@@ -126,7 +128,7 @@ impl THandler<RequestParams, ResponseResult, ErrorData> for JsonSignal {
                         },
                     ))
                     .await;
-
+                log::info!("receive join3");
                 let join = join_param.unwrap();
 
                 if let Err(err) = self
@@ -138,7 +140,7 @@ impl THandler<RequestParams, ResponseResult, ErrorData> for JsonSignal {
                     log::error!("join err: {}", err);
                     return;
                 }
-
+                log::info!("receive join4");
                 match self.peer_local.answer(join.offer).await {
                     Ok(answer) => {
                         if let Err(err) = json_rpc2.response(Response::new(
@@ -154,8 +156,10 @@ impl THandler<RequestParams, ResponseResult, ErrorData> for JsonSignal {
                         return;
                     }
                 }
+                log::info!("receive join5");
             }
             "offer" => {
+                log::info!("receive offer");
                 if let Some(Parameters::Negotiation(negotiation)) = request.params {
                     match self.peer_local.answer(negotiation.desc).await {
                         Ok(answer) => {
@@ -180,6 +184,7 @@ impl THandler<RequestParams, ResponseResult, ErrorData> for JsonSignal {
             }
 
             "answer" => {
+                log::info!("receive offer");
                 if let Some(Parameters::Negotiation(negotiation)) = request.params {
                     if let Err(err) = self
                         .peer_local
@@ -196,6 +201,7 @@ impl THandler<RequestParams, ResponseResult, ErrorData> for JsonSignal {
             }
 
             "trickle" => {
+                log::info!("receive trickle");
                 if let Some(Parameters::Trickle(trickle)) = request.params {
                     if let Err(err) = self
                         .peer_local
@@ -215,5 +221,6 @@ impl THandler<RequestParams, ResponseResult, ErrorData> for JsonSignal {
                 log::info!("unknow method");
             }
         }
+        log::info!("handle end...");
     }
 }
