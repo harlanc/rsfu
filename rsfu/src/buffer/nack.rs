@@ -145,6 +145,10 @@ mod tests {
         assert_eq!(3, nack_queue.nacks[1].seq_number);
         assert_eq!(4, nack_queue.nacks[2].seq_number);
         assert_eq!(36, nack_queue.nacks[3].seq_number);
+
+        for i in 1..1{
+            println!("number:{}",i);
+        }
     }
 
     #[test]
@@ -179,7 +183,7 @@ mod tests {
 
         let np = NackPair {
             packet_id: 1,
-            lost_packets: 13,
+            lost_packets: 13,//0000 0000 0000 1101
         };
 
         assert_eq!(pairs, Some(vec![np]));
@@ -197,11 +201,11 @@ mod tests {
 
         let np = NackPair {
             packet_id: 1,
-            lost_packets: 13,
+            lost_packets: 13,//1101
         };
         let np2 = NackPair {
             packet_id: 20,
-            lost_packets: 74,
+            lost_packets: 74,//1001010
         };
 
         assert_eq!(pairs, Some(vec![np, np2]));

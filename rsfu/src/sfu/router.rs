@@ -47,14 +47,14 @@ pub type RtcpWriterFn = Box<
 
 pub type OnAddReciverTrackFn = Box<
     dyn (FnMut(
-            Arc<Mutex<dyn Receiver + Send + Sync>>,
+            Arc<dyn Receiver + Send + Sync>,
         ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>)
         + Send
         + Sync,
 >;
 pub type OnDelReciverTrackFn = Box<
     dyn (FnMut(
-            Arc<Mutex<dyn Receiver + Send + Sync>>,
+            Arc<dyn Receiver + Send + Sync>,
         ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>)
         + Send
         + Sync,
@@ -64,28 +64,29 @@ pub type OnDelReciverTrackFn = Box<
 pub trait Router {
     fn id(&self) -> String;
     async fn add_receiver(
-        &mut self,
+        &self,
         receiver: Arc<RTCRtpReceiver>,
         track: Arc<TrackRemote>,
         track_id: String,
         stream_id: String,
-    ) -> (Arc<Mutex<dyn Receiver + Send + Sync>>, bool);
+    ) -> (Arc<dyn Receiver + Send + Sync>, bool);
     async fn add_down_tracks(
-        &mut self,
+        &self,
         s: Arc<Mutex<Subscriber>>,
-        r: Option<Arc<Mutex<dyn Receiver + Send + Sync>>>,
+        r: Option<Arc<dyn Receiver + Send + Sync>>,
     ) -> Result<()>;
     async fn add_down_track(
-        &mut self,
+        &self,
         s: Arc<Mutex<Subscriber>>,
-        r: Arc<Mutex<dyn Receiver + Send + Sync>>,
+        r: Arc<dyn Receiver + Send + Sync>,
     ) -> Result<Option<Arc<DownTrack>>>;
     async fn set_rtcp_writer(&self, writer: RtcpWriterFn);
-    fn get_receiver(&self) -> Arc<Mutex<HashMap<String, Arc<Mutex<dyn Receiver + Send + Sync>>>>>;
-    fn set_peer_connection(&mut self, pc: Arc<RTCPeerConnection>);
+    fn get_receiver(&self) -> Arc<Mutex<HashMap<String, Arc<dyn Receiver + Send + Sync>>>>;
+
     async fn stop(&self);
     async fn on_add_receiver_track(&self, f: OnAddReciverTrackFn);
     async fn on_del_receiver_track(&self, f: OnDelReciverTrackFn);
+    async fn send_rtcp(&self);
 }
 
 #[derive(Default, Clone)]
@@ -105,11 +106,11 @@ pub struct RouterLocal {
     stats: Arc<Mutex<HashMap<u32, Stream>>>,
     rtcp_sender_channel: Arc<RtcpDataSender>,
     rtcp_receiver_channel: Arc<Mutex<RtcpDataReceiver>>,
-    stop_sender_channel: mpsc::UnboundedSender<()>,
-    stop_receiver_channel: mpsc::UnboundedReceiver<()>,
+    stop_sender_channel: Arc<Mutex<mpsc::UnboundedSender<()>>>,
+    stop_receiver_channel: Arc<Mutex<mpsc::UnboundedReceiver<()>>>,
     config: RouterConfig,
     session: Arc<dyn Session + Send + Sync>,
-    receivers: Arc<Mutex<HashMap<String, Arc<Mutex<dyn Receiver + Send + Sync>>>>>,
+    receivers: Arc<Mutex<HashMap<String, Arc<dyn Receiver + Send + Sync>>>>,
     buffer_factory: AtomicFactory,
     rtcp_writer_handler: Arc<Mutex<Option<RtcpWriterFn>>>,
     on_add_receiver_track_handler: Arc<Mutex<Option<OnAddReciverTrackFn>>>,
@@ -125,8 +126,8 @@ impl RouterLocal {
             stats: Arc::new(Mutex::new(HashMap::new())),
             rtcp_sender_channel: Arc::new(s),
             rtcp_receiver_channel: Arc::new(Mutex::new(r)),
-            stop_sender_channel: sender,
-            stop_receiver_channel: receiver,
+            stop_sender_channel: Arc::new(Mutex::new(sender)),
+            stop_receiver_channel: Arc::new(Mutex::new(receiver)),
             config,
             session,
             receivers: Arc::new(Mutex::new(HashMap::new())),
@@ -137,7 +138,7 @@ impl RouterLocal {
         }
     }
 
-    async fn delete_receiver(&mut self, track: String, ssrc: u32) {
+    async fn delete_receiver(&self, track: String, ssrc: u32) {
         if let Some(f) = &mut *self.on_del_receiver_track_handler.lock().await {
             if let Some(track) = self.receivers.lock().await.get(&track) {
                 f(track.clone());
@@ -146,28 +147,11 @@ impl RouterLocal {
         self.receivers.lock().await.remove(&track);
         self.stats.lock().await.remove(&ssrc);
     }
-    async fn send_rtcp(&mut self) {
-        loop {
-            let mut rtcp_receiver = self.rtcp_receiver_channel.lock().await;
-            tokio::select! {
-              data = rtcp_receiver.recv() => {
-                if let Some(val) = data{
-                    if let Some(f) = &mut *self.rtcp_writer_handler.lock().await {
-                        f(val);
-                    }
-                }
-              }
-              data = self.stop_receiver_channel.recv() => {
-                return ;
-              }
-            };
-        }
-    }
 }
 
 #[async_trait]
 impl Router for RouterLocal {
-    fn get_receiver(&self) -> Arc<Mutex<HashMap<String, Arc<Mutex<dyn Receiver + Send + Sync>>>>> {
+    fn get_receiver(&self) -> Arc<Mutex<HashMap<String, Arc<dyn Receiver + Send + Sync>>>> {
         self.receivers.clone()
     }
 
@@ -185,17 +169,17 @@ impl Router for RouterLocal {
     }
 
     async fn stop(&self) {
-        let rv = self.stop_sender_channel.send(());
+        let rv = self.stop_sender_channel.lock().await.send(());
         if self.config.with_stats {}
     }
 
     async fn add_receiver(
-        &mut self,
+        &self,
         receiver: Arc<RTCRtpReceiver>,
         track: Arc<TrackRemote>,
         track_id: String,
         stream_id: String,
-    ) -> (Arc<Mutex<dyn Receiver + Send + Sync>>, bool) {
+    ) -> (Arc<dyn Receiver + Send + Sync>, bool) {
         let mut publish = false;
 
         let buffer = self.buffer_factory.get_or_new_buffer(track.ssrc()).await;
@@ -250,7 +234,9 @@ impl Router for RouterLocal {
                         },
                     ))
                     .await;
-                    self.twcc = Arc::new(Mutex::new(Some(twcc)));
+                    let mut t = &*self.twcc.lock().await;
+                    t = &Some(twcc);
+                    //self.twcc = Arc::new(Mutex::new(Some(twcc)));
                 }
 
                 let twcc_out = Arc::clone(&self.twcc);
@@ -340,7 +326,7 @@ impl Router for RouterLocal {
             }))
             .await;
 
-        let mut result_receiver;
+        let result_receiver;
 
         if let Some(recv) = self.receivers.lock().await.get(&track_id) {
             result_receiver = recv.clone();
@@ -398,7 +384,7 @@ impl Router for RouterLocal {
                 })
             }))
             .await;
-            result_receiver = Arc::new(Mutex::new(rv));
+            result_receiver = Arc::new(rv);
 
             self.receivers
                 .lock()
@@ -411,9 +397,7 @@ impl Router for RouterLocal {
                 f(result_receiver.clone());
             }
         }
-        result_receiver
-            .lock()
-            .await
+        let layer = result_receiver
             .add_up_track(
                 track,
                 buffer.clone(),
@@ -421,19 +405,28 @@ impl Router for RouterLocal {
             )
             .await;
 
-        buffer.lock().await.bind(
-            receiver.get_parameters().await,
-            BufferOptions {
-                max_bitrate: self.config.max_bandwidth,
-            },
-        );
+        if let Some(layer_val) = layer {
+            let receiver_clone = result_receiver.clone();
+            tokio::spawn(async move { receiver_clone.write_rtp(layer_val).await });
+        }
+
+        buffer
+            .lock()
+            .await
+            .bind(
+                receiver.get_parameters().await,
+                BufferOptions {
+                    max_bitrate: self.config.max_bandwidth,
+                },
+            )
+            .await;
         (result_receiver, publish)
     }
 
     async fn add_down_tracks(
-        &mut self,
+        &self,
         s: Arc<Mutex<Subscriber>>,
-        r: Option<Arc<Mutex<dyn Receiver + Send + Sync>>>,
+        r: Option<Arc<dyn Receiver + Send + Sync>>,
     ) -> Result<()> {
         let sub = s.lock().await;
         if sub.no_auto_subscribe {
@@ -465,11 +458,11 @@ impl Router for RouterLocal {
     }
 
     async fn add_down_track(
-        &mut self,
+        &self,
         s: Arc<Mutex<Subscriber>>,
-        r: Arc<Mutex<dyn Receiver + Send + Sync>>,
+        r: Arc<dyn Receiver + Send + Sync>,
     ) -> Result<(Option<Arc<DownTrack>>)> {
-        let mut recv = r.lock().await;
+        let mut recv = r.clone();
         let mut sub = s.lock().await;
         for dt in sub.get_downtracks(recv.stream_id()).await.unwrap() {
             if dt.id() == recv.track_id() {
@@ -543,10 +536,7 @@ impl Router for RouterLocal {
                         match rv {
                             Ok(_) => {
                                 sub_in
-                                    .remove_down_track(
-                                        r_in.lock().await.stream_id(),
-                                        down_track_arc_in,
-                                    )
+                                    .remove_down_track(r_in.stream_id(), down_track_arc_in)
                                     .await;
                                 sub_in.negotiate().await;
                             }
@@ -573,7 +563,7 @@ impl Router for RouterLocal {
                     tokio::spawn(async move {
                         s_in.lock()
                             .await
-                            .send_stream_down_track_reports(r_in.lock().await.stream_id())
+                            .send_stream_down_track_reports(r_in.stream_id())
                             .await;
                     });
                 })
@@ -591,11 +581,25 @@ impl Router for RouterLocal {
     async fn set_rtcp_writer(&self, writer: RtcpWriterFn) {
         let mut handler = self.rtcp_writer_handler.lock().await;
         *handler = Some(writer);
-        //todo
     }
 
-    fn set_peer_connection(&mut self, pc: Arc<RTCPeerConnection>) {
-        // Ok(());
+    async fn send_rtcp(&self) {
+        loop {
+            let mut rtcp_receiver = self.rtcp_receiver_channel.lock().await;
+            let mut stop_receiver = self.stop_receiver_channel.lock().await;
+            tokio::select! {
+              data = rtcp_receiver.recv() => {
+                if let Some(val) = data{
+                    if let Some(f) = &mut *self.rtcp_writer_handler.lock().await {
+                        f(val);
+                    }
+                }
+              }
+              data = stop_receiver.recv() => {
+                return ;
+              }
+            };
+        }
     }
 }
 
@@ -603,7 +607,7 @@ async fn delete_receiver(
     track: &String,
     ssrc: &u32,
     del_handler: Arc<Mutex<Option<OnDelReciverTrackFn>>>,
-    receivers: Arc<Mutex<HashMap<String, Arc<Mutex<dyn Receiver + Send + Sync>>>>>,
+    receivers: Arc<Mutex<HashMap<String, Arc<dyn Receiver + Send + Sync>>>>,
     stats: Arc<Mutex<HashMap<u32, Stream>>>,
 ) {
     if let Some(f) = &mut *del_handler.lock().await {

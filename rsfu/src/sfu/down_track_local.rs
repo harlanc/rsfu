@@ -91,7 +91,7 @@ pub struct DownTrackLocal {
     // max_spatial_layer: AtomicI32,
     // max_temporal_layer: AtomicI32,
     pub codec: RTCRtpCodecCapability,
-    pub receiver: Arc<Mutex<dyn Receiver + Send + Sync>>,
+    pub receiver: Arc<dyn Receiver + Send + Sync>,
     // pub transceiver: Option<Arc<RTCRtpTransceiver>>,
     pub write_stream: Mutex<Option<Arc<dyn TrackLocalWriter + Send + Sync>>>, //TrackLocalWriter,
     // pub on_close_handler: Arc<Mutex<Option<OnCloseFn>>>,
@@ -116,18 +116,18 @@ impl PartialEq for DownTrackLocal {
 impl DownTrackLocal {
     pub(super) async fn new(
         c: RTCRtpCodecCapability,
-        r: Arc<Mutex<dyn Receiver + Send + Sync>>,
+        r: Arc<dyn Receiver + Send + Sync>,
         mt: i32,
     ) -> Self {
-        let receiver = r.lock().await;
+        //let receiver = r.lock().await;
         Self {
             codec: c,
-            id: receiver.track_id(),
+            id: r.track_id(),
             // peer_id: peer_id,
             bound: AtomicBool::new(false),
             mime: Mutex::new(String::from("")),
             ssrc: Mutex::new(0),
-            stream_id: receiver.stream_id(),
+            stream_id: r.stream_id(),
             max_track: mt,
             payload_type: Mutex::new(0),
             sequencer: Arc::new(Mutex::new(AtomicSequencer::new(0))),
@@ -173,7 +173,7 @@ impl DownTrackLocal {
         last_ssrc: u32,
         ssrc: u32,
         sequencer: Arc<Mutex<AtomicSequencer>>,
-        receiver: Arc<Mutex<dyn Receiver + Send + Sync>>,
+        receiver: Arc<dyn Receiver + Send + Sync>,
     ) {
         // let enabled = self.enabled.load(Ordering::Relaxed);
         if !enabled {
@@ -275,7 +275,7 @@ impl DownTrackLocal {
         }
 
         if fwd_pkts.len() > 0 {
-            receiver.lock().await.send_rtcp(fwd_pkts);
+            receiver.send_rtcp(fwd_pkts);
         }
 
         // Ok(())

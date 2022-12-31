@@ -63,7 +63,7 @@ pub struct Publisher {
     pc: Arc<RTCPeerConnection>,
     cfg: WebRTCTransportConfig,
 
-    router: Arc<Mutex<dyn Router + Send + Sync>>,
+    router: Arc<dyn Router + Send + Sync>,
     session: Arc<dyn Session + Send + Sync>,
     tracks: Arc<Mutex<Vec<PublisherTrack>>>,
 
@@ -90,7 +90,7 @@ struct TestA {}
 #[derive(Clone)]
 pub(super) struct PublisherTrack {
     track: Arc<TrackRemote>,
-    receiver: Arc<Mutex<dyn Receiver + Send + Sync>>,
+    receiver: Arc<dyn Receiver + Send + Sync>,
 
     // This will be used in the future for tracks that will be relayed as clients or servers
     // This is for SVC and Simulcast where you will be able to chose if the relayed peer just
@@ -133,7 +133,7 @@ impl Publisher {
             id: id.clone(),
             pc: Arc::new(pc),
             cfg: config_clone,
-            router: Arc::new(Mutex::new(RouterLocal::new(id, session.clone(), router))),
+            router: Arc::new(RouterLocal::new(id, session.clone(), router)),
             session: session,
 
             tracks: Arc::new(Mutex::new(Vec::new())),
@@ -181,7 +181,7 @@ impl Publisher {
                     Box::pin(async move {
                         if let Some(receiver_val) = receiver {
                             if let Some(track_val) = track {
-                                let mut router = router_in.lock().await;
+                                let router = router_in;
                                 let track_id = track_val.id().await;
                                 let track_stream_id = track_val.stream_id().await;
                                 let track_val_clone = track_val.clone();
@@ -209,7 +209,7 @@ impl Publisher {
                                     let mut relay_peers = relay_peers_in.lock().await;
 
                                     for val in &mut *relay_peers {
-                                        Publisher::crate_relay_track(
+                                        if let Err(err) = Publisher::crate_relay_track(
                                             track_val.clone(),
                                             receiver.clone(),
                                             &mut val.peer,
@@ -218,7 +218,10 @@ impl Publisher {
                                             factory_in.clone(),
                                             peer_connection.clone(),
                                         )
-                                        .await;
+                                        .await
+                                        {
+                                            log::error!("create relay track error: {}", err);
+                                        };
                                     }
                                 } else {
                                     tracks_in.lock().await.push(PublisherTrack {
@@ -243,15 +246,8 @@ impl Publisher {
                 if d.label() == super::subscriber::API_CHANNEL_LABEL {
                     return Box::pin(async {});
                 }
-
                 Box::pin(async move {
-                    //todo
-                    //let s = session_in.lock().await;
-
-                    // let ss = Arc::new(s);
-                    // ss.add_data_channel(peer_id, d);
-
-                    //let s = session_in.lock().await;
+                    session_in.add_data_channel(peer_id, d).await;
                 })
             }))
             .await;
@@ -279,10 +275,23 @@ impl Publisher {
             }))
             .await;
 
+        let pc_clone_out = self.pc.clone();
         self.router
-            .lock()
-            .await
-            .set_peer_connection(self.pc.clone());
+            .set_rtcp_writer(Box::new(
+                move |packets: Vec<Box<dyn RtcpPacket + Send + Sync>>| {
+                    let pc_clone_in = pc_clone_out.clone();
+                    Box::pin(async move {
+                        pc_clone_in.write_rtcp(&packets[..]).await;
+                        Ok(())
+                    })
+                },
+            ))
+            .await;
+
+        let router_clone = self.router.clone();
+        tokio::spawn(async move {
+            router_clone.send_rtcp().await;
+        });
     }
 
     pub async fn close(&mut self) {
@@ -306,7 +315,7 @@ impl Publisher {
         Ok(answer)
     }
 
-    pub fn get_router(&self) -> Arc<Mutex<dyn Router + Send + Sync>> {
+    pub fn get_router(&self) -> Arc<dyn Router + Send + Sync> {
         self.router.clone()
     }
 
@@ -415,7 +424,7 @@ impl Publisher {
     async fn crate_relay_track(
         // &mut self,
         track: Arc<TrackRemote>,
-        receiver: Arc<Mutex<dyn Receiver + Send + Sync>>,
+        receiver: Arc<dyn Receiver + Send + Sync>,
         rp: &mut Peer,
         peer_id: String,
         max_packet_track: i32,
@@ -443,7 +452,7 @@ impl Publisher {
         };
 
         let downtrack = DownTrack::new(c, receiver.clone(), peer_id, max_packet_track).await;
-        let mut receiver_mg = receiver.lock().await;
+        let mut receiver_mg = receiver;
 
         let downtrack_arc = Arc::new(downtrack);
         let media_ssrc = track.ssrc();
@@ -520,7 +529,7 @@ impl Publisher {
 
     async fn close_with_parameters(
         relay_peers: Arc<Mutex<Vec<RelayPeer>>>,
-        router: Arc<Mutex<dyn Router + Send + Sync>>,
+        router: Arc<dyn Router + Send + Sync>,
         pc: Arc<RTCPeerConnection>,
     ) {
         // self.close_once.call_once(|| {
@@ -530,7 +539,7 @@ impl Publisher {
         for val in &mut *peers {
             val.peer.close().await;
         }
-        router.lock().await.stop().await;
+        router.stop().await;
         pc.close().await;
         //     });
         // });

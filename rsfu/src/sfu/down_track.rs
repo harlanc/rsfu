@@ -122,7 +122,7 @@ impl PartialEq for DownTrack {
 impl DownTrack {
     pub(super) async fn new(
         c: RTCRtpCodecCapability,
-        r: Arc<Mutex<dyn Receiver + Send + Sync>>,
+        r: Arc<dyn Receiver + Send + Sync>,
         peer_id: String,
         mt: i32,
     ) -> Self {
@@ -322,7 +322,7 @@ impl DownTrack {
                 if csl != self.target_spatial_layer.load(Ordering::Relaxed) || csl == target_layer {
                     return Err(WEBRTCError::new(String::from("error spatial layer busy..")));
                 }
-                let receiver = self.down_track_local.receiver.lock().await;
+                let receiver = &self.down_track_local.receiver;
                 match receiver
                     .switch_down_track(self.clone(), target_layer as usize)
                     .await
@@ -464,7 +464,7 @@ impl DownTrack {
             return None;
         }
 
-        let receiver = self.down_track_local.receiver.lock().await;
+        let receiver = &self.down_track_local.receiver;
         let (sr_rtp, sr_ntp) = receiver
             .get_sender_report_time(self.current_spatial_layer.load(Ordering::Relaxed) as usize)
             .await;
@@ -510,7 +510,7 @@ impl DownTrack {
             match self.down_track_local.kind() {
                 RTPCodecType::Video => {
                     if !ext_packet.key_frame {
-                        let receiver = self.down_track_local.receiver.lock().await;
+                        let receiver = &self.down_track_local.receiver;
                         receiver.send_rtcp(vec![Box::new(PictureLossIndication {
                             sender_ssrc: ssrc,
                             media_ssrc: ext_packet.packet.header.ssrc,
@@ -590,7 +590,7 @@ impl DownTrack {
             temporal_supported = simulcast.temporal_supported;
             if last_ssrc != ext_packet.packet.header.ssrc || re_sync {
                 if re_sync && !ext_packet.key_frame {
-                    let receiver = self.down_track_local.receiver.lock().await;
+                    let receiver = &self.down_track_local.receiver;
                     receiver.send_rtcp(vec![Box::new(PictureLossIndication {
                         sender_ssrc: ssrc,
                         media_ssrc: ext_packet.packet.header.ssrc,
@@ -705,7 +705,7 @@ impl DownTrack {
             let now = SystemTime::now();
             let simulcast = &mut self.simulcast.lock().await;
             if now > simulcast.switch_delay {
-                let receiver = self.down_track_local.receiver.lock().await;
+                let receiver = &self.down_track_local.receiver;
                 let brs = receiver.get_bitrate().await;
                 let cbr = brs[current_spatial_layer as usize];
                 let mtl = receiver.get_max_temporal_layer().await;

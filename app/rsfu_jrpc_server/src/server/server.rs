@@ -96,7 +96,7 @@ impl THandler<RequestParams, ResponseResult, ErrorData> for JsonSignal {
                     response_error("join parameter is none");
                     return;
                 }
-                log::info!("receive join1");
+
                 let rpc2_out_clone = json_rpc2.clone();
                 self.peer_local
                     .on_offer(Box::new(move |offer: RTCSessionDescription| {
@@ -111,7 +111,7 @@ impl THandler<RequestParams, ResponseResult, ErrorData> for JsonSignal {
                         })
                     }))
                     .await;
-                log::info!("receive join2");
+
                 let rpc2_out_clone_2 = json_rpc2.clone();
                 self.peer_local
                     .on_ice_candidate(Box::new(
@@ -128,7 +128,7 @@ impl THandler<RequestParams, ResponseResult, ErrorData> for JsonSignal {
                         },
                     ))
                     .await;
-                log::info!("receive join3");
+
                 let join = join_param.unwrap();
 
                 if let Err(err) = self
@@ -140,7 +140,7 @@ impl THandler<RequestParams, ResponseResult, ErrorData> for JsonSignal {
                     log::error!("join err: {}", err);
                     return;
                 }
-                log::info!("receive join4");
+
                 match self.peer_local.answer(join.offer).await {
                     Ok(answer) => {
                         if let Err(err) = json_rpc2.response(Response::new(
@@ -156,7 +156,6 @@ impl THandler<RequestParams, ResponseResult, ErrorData> for JsonSignal {
                         return;
                     }
                 }
-                log::info!("receive join5");
             }
             "offer" => {
                 log::info!("receive offer");

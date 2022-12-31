@@ -16,6 +16,7 @@ use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
 use webrtc_util::{Marshal, MarshalSize, Unmarshal};
 
 use super::errors::Result;
+use async_trait::async_trait;
 use std::borrow::BorrowMut;
 use std::collections::VecDeque;
 use std::future::Future;
@@ -149,7 +150,7 @@ impl Buffer {
         }
     }
 
-    pub fn bind(&mut self, params: RTCRtpParameters, o: Options) {
+    pub async fn bind(&mut self, params: RTCRtpParameters, o: Options) {
         let codec = &params.codecs[0];
         self.clock_rate = codec.capability.clock_rate;
         self.max_bitrate = o.max_bitrate;
@@ -203,7 +204,7 @@ impl Buffer {
         }
 
         for pp in self.pending_packets.clone() {
-            self.calc(&pp.packet[..], pp.arrival_time as i64);
+            self.calc(&pp.packet[..], pp.arrival_time as i64).await;
         }
         self.pending_packets.clear();
         self.bound = true;
@@ -363,11 +364,11 @@ impl Buffer {
         self.last_transit = transit as u32;
 
         if self.twcc {
-            if let Some(ext) = packet.header.get_extension(self.twcc_ext) {
+            if let Some(mut ext) = packet.header.get_extension(self.twcc_ext) {
                 if ext.len() > 1 {
                     let mut handler = self.on_transport_wide_cc_handler.lock().await;
                     if let Some(f) = &mut *handler {
-                        //f(data.level).await;
+                        f(ext.get_u16(), arrival_time, packet.header.marker).await;
                     }
                 }
             }
@@ -388,8 +389,12 @@ impl Buffer {
 
         let diff = arrival_time - self.last_report;
 
-        if let Some(nacker) = &self.nacker {
+        if self.nacker.is_some() {
             let rv = self.build_nack_packet();
+            let mut handler = self.on_feedback_callback_handler.lock().await;
+            if let Some(f) = &mut *handler {
+                f(rv).await;
+            }
         }
 
         if diff as f64 >= REPORT_DELTA {
@@ -400,8 +405,8 @@ impl Buffer {
         }
     }
 
-    fn build_nack_packet(&mut self) -> Vec<Box<dyn RtcpPacket>> {
-        let mut pkts: Vec<Box<dyn RtcpPacket>> = Vec::new();
+    fn build_nack_packet(&mut self) -> Vec<Box<dyn RtcpPacket + Send + Sync>> {
+        let mut pkts: Vec<Box<dyn RtcpPacket + Send + Sync>> = Vec::new();
 
         if self.nacker == None {
             return pkts;
@@ -591,9 +596,10 @@ impl Buffer {
     }
 }
 
+#[async_trait]
 impl BufferIO for Buffer {
     // Write adds a RTP Packet, out of order, new packet may be arrived later
-    fn write(&mut self, pkt: &[u8]) -> Result<u32> {
+    async fn write(&mut self, pkt: &[u8]) -> Result<u32> {
         if !self.bound {
             self.pending_packets.push(PendingPackets {
                 arrival_time: Instant::now().elapsed().subsec_nanos() as u64,
@@ -603,7 +609,8 @@ impl BufferIO for Buffer {
             return Ok(0);
         }
 
-        self.calc(pkt, Instant::now().elapsed().subsec_nanos() as i64);
+        self.calc(pkt, Instant::now().elapsed().subsec_nanos() as i64)
+            .await;
 
         Ok(0)
     }
@@ -665,4 +672,16 @@ fn is_later_timestamp(timestamp1: u32, timestamp2: u32) -> bool {
         return true;
     }
     return false;
+}
+
+#[cfg(test)]
+mod tests {
+
+    #[test]
+    fn test_u16() {
+        let number1: u16 = 0;
+        let number2: u16 = 2;
+
+        // println!("{}", number1 - number2);
+    }
 }

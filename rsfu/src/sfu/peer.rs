@@ -214,27 +214,27 @@ impl PeerLocal {
         if uid == String::from("") {
             uuid = Uuid::new_v4().to_string();
         }
-        log::info!("join begin 0...");
+
         self.id = uuid;
 
         let mut provider = self.provider.lock().await;
-        log::info!("join begin 0.01...");
+
         let (s, webrtc_transport_cfg) = provider.get_session(sid).await;
-        log::info!("join begin 0.1...");
+
         let rtc_config_clone = RTCConfiguration {
             ice_servers: webrtc_transport_cfg.configuration.ice_servers.clone(),
             ..Default::default()
         };
-        log::info!("join begin 1...");
+
         let config_clone = WebRTCTransportConfig {
             configuration: rtc_config_clone,
             setting: webrtc_transport_cfg.setting.clone(),
             Router: webrtc_transport_cfg.Router.clone(),
             factory: Arc::new(Mutex::new(AtomicFactory::new(1000, 1000))),
         };
-        log::info!("join begin 2...");
+
         self.session = s;
-        log::info!("join 1...");
+
         if !cfg.no_subscribe {
             let subscriber = Arc::new(Mutex::new(
                 Subscriber::new(self.id.clone(), webrtc_transport_cfg).await?,
@@ -306,27 +306,17 @@ impl PeerLocal {
 
             self.subscriber = Some(subscriber);
         }
-        log::info!("join 2...");
+
         if !cfg.no_publish {
-            log::info!("join 3...");
             if !cfg.no_subscribe {
-                log::info!("join 3111...");
                 let session_mutex = self.session.as_ref().unwrap();
-                log::info!("join 3112...");
-                //let session_1 = session_mutex.lock();
-                log::info!("join 3113...");
-                // let session = session_1.await;
-                log::info!("join 3.1...");
                 for dc in &*session_mutex.get_data_channel_middlewares().lock().await {
-                    log::info!("join 3.2...");
                     if let Some(subscriber) = &self.subscriber {
-                        log::info!("join 3.3...");
                         subscriber.lock().await.add_data_channel(dc.clone()).await?;
                     }
                     // let subscriber = self.subscriber.unwrap().lock().await;
                 }
             }
-            log::info!("join 4...");
             let on_ice_candidate_out = self.on_ice_candidate_handler.clone();
             let closed_out_1 = self.closed.clone();
 
@@ -356,7 +346,7 @@ impl PeerLocal {
                     })
                 }))
                 .await;
-            log::info!("join 5...");
+
             let on_ice_connection_state_change_out = self.on_ice_connection_state_change.clone();
             let closed_out_2 = self.closed.clone();
             publisher
@@ -376,7 +366,6 @@ impl PeerLocal {
                     })
                 }))
                 .await;
-            log::info!("join 6...");
             self.publisher = Some(Arc::new(Mutex::new(publisher)));
         }
 

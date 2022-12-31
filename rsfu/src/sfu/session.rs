@@ -35,8 +35,8 @@ pub trait Session {
     fn id(&self) -> String;
     async fn publish(
         &self,
-        router: Arc<Mutex<dyn Router + Send + Sync>>,
-        r: Arc<Mutex<dyn Receiver + Send + Sync>>,
+        router: Arc<dyn Router + Send + Sync>,
+        r: Arc<dyn Receiver + Send + Sync>,
     );
     async fn subscribe(&mut self, peer: Arc<dyn Peer + Send + Sync>);
     async fn add_peer(&self, peer: Arc<Mutex<dyn Peer + Send + Sync>>);
@@ -49,9 +49,9 @@ pub trait Session {
     ) -> Result<String>;
     fn audio_obserber(&self) -> Option<Arc<Mutex<AudioObserver>>>;
 
-    async fn add_data_channel(&mut self, owner: String, dc: Arc<RTCDataChannel>);
+    async fn add_data_channel(&self, owner: String, dc: Arc<RTCDataChannel>);
     fn get_data_channel_middlewares(&self) -> Arc<Mutex<Vec<Arc<DataChannel>>>>;
-    fn get_fanout_data_channel_labels(&self) -> Vec<String>;
+    async fn get_fanout_data_channel_labels(&self) -> Vec<String>;
     async fn get_data_channels(&self, peer_id: String, label: String) -> Vec<Arc<RTCDataChannel>>;
     async fn fanout_message(&self, origin: String, label: String, msg: DataChannelMessage);
     async fn peers(&self) -> Vec<Arc<Mutex<dyn Peer + Send + Sync>>>;
@@ -68,7 +68,7 @@ pub struct SessionLocal {
     relay_peers: Arc<Mutex<HashMap<String, Arc<RelayPeer>>>>,
     closed: AtomicBool,
     audio_observer: Option<Arc<Mutex<AudioObserver>>>,
-    fanout_data_channels: Vec<String>,
+    fanout_data_channels: Arc<Mutex<Vec<String>>>,
     data_channels: Arc<Mutex<Vec<Arc<DataChannel>>>>,
     on_close_handler: Arc<Mutex<Option<OnCloseFn>>>,
 }
@@ -86,7 +86,7 @@ impl SessionLocal {
             relay_peers: Arc::new(Mutex::new(HashMap::new())),
             closed: AtomicBool::new(false),
             audio_observer: None,
-            fanout_data_channels: Vec::new(),
+            fanout_data_channels: Arc::new(Mutex::new(Vec::new())),
             data_channels: dcs,
             on_close_handler: Arc::new(Mutex::new(None)),
         };
@@ -192,8 +192,8 @@ impl Session for SessionLocal {
         self.data_channels.clone()
     }
 
-    fn get_fanout_data_channel_labels(&self) -> Vec<String> {
-        self.fanout_data_channels.clone()
+    async fn get_fanout_data_channel_labels(&self) -> Vec<String> {
+        self.fanout_data_channels.lock().await.clone()
     }
 
     async fn add_peer(&self, peer: Arc<Mutex<dyn Peer + Send + Sync>>) {
@@ -272,12 +272,12 @@ impl Session for SessionLocal {
         }
     }
 
-    async fn add_data_channel(&mut self, owner: String, dc: Arc<RTCDataChannel>) {
+    async fn add_data_channel(&self, owner: String, dc: Arc<RTCDataChannel>) {
         let label = dc.label().to_string();
 
         let data_channels_out = self.get_data_channels(owner.clone(), label.clone()).await;
 
-        for lbl in &self.fanout_data_channels {
+        for lbl in &*self.fanout_data_channels.lock().await {
             if label == lbl.clone() {
                 dc.on_message(Box::new(move |msg: DataChannelMessage| {
                     let data_channels_in = data_channels_out.clone();
@@ -290,7 +290,7 @@ impl Session for SessionLocal {
             }
         }
 
-        self.fanout_data_channels.push(label.clone());
+        self.fanout_data_channels.lock().await.push(label.clone());
 
         let peers = self.peers.lock().await;
 
@@ -353,10 +353,10 @@ impl Session for SessionLocal {
 
     async fn publish(
         &self,
-        router: Arc<Mutex<dyn Router + Send + Sync>>,
-        r: Arc<Mutex<dyn Receiver + Send + Sync>>,
+        router: Arc<dyn Router + Send + Sync>,
+        r: Arc<dyn Receiver + Send + Sync>,
     ) {
-        let mut router_val = router.lock().await;
+        let mut router_val = router;
         for peer_mutex in self.peers().await {
             let peer = peer_mutex.lock().await;
             if router_val.id() == peer.id() || peer.subscriber().is_none() {
@@ -373,7 +373,8 @@ impl Session for SessionLocal {
         }
     }
     async fn subscribe(&mut self, peer: Arc<dyn Peer + Send + Sync>) {
-        for label in &self.fanout_data_channels {
+        let fanout_data_channels = self.fanout_data_channels.lock().await;
+        for label in &*fanout_data_channels {
             if let Some(sub) = peer.subscriber() {
                 match sub.lock().await.add_data_channel_2(label.clone()).await {
                     Ok(dc) => {
@@ -407,8 +408,6 @@ impl Session for SessionLocal {
 
             let router = cur_peer.publisher().unwrap().lock().await.get_router();
             if router
-                .lock()
-                .await
                 .add_down_tracks(peer.subscriber().unwrap(), None)
                 .await
                 .is_err()
