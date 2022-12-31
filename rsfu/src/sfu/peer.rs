@@ -49,7 +49,7 @@ pub type OnIceConnectionStateChangeFn = Box<
 pub trait Peer {
     fn id(&self) -> String;
     fn session(&self) -> Option<Arc<dyn Session + Send + Sync>>;
-    fn publisher(&self) -> Option<Arc<Mutex<Publisher>>>;
+    fn publisher(&self) -> Option<Arc<Publisher>>;
     fn subscriber(&self) -> Option<Arc<Mutex<Subscriber>>>;
     //fn close() -> Result<()>;
     //no used now
@@ -92,7 +92,7 @@ pub struct PeerLocal {
     session: Option<Arc<dyn Session + Send + Sync>>,
     closed: Arc<AtomicBool>,
     provider: Arc<Mutex<dyn SessionProvider + Send + Sync>>,
-    publisher: Option<Arc<Mutex<Publisher>>>,
+    publisher: Option<Arc<Publisher>>,
     subscriber: Option<Arc<Mutex<Subscriber>>>,
 
     pub on_offer_handler: Arc<Mutex<Option<OnOfferFn>>>,
@@ -116,7 +116,7 @@ impl Peer for PeerLocal {
         self.subscriber.clone()
     }
 
-    fn publisher(&self) -> Option<Arc<Mutex<Publisher>>> {
+    fn publisher(&self) -> Option<Arc<Publisher>> {
         self.publisher.clone()
     }
 
@@ -366,7 +366,7 @@ impl PeerLocal {
                     })
                 }))
                 .await;
-            self.publisher = Some(Arc::new(Mutex::new(publisher)));
+            self.publisher = Some(Arc::new(publisher));
         }
 
         Ok(())
@@ -374,11 +374,11 @@ impl PeerLocal {
 
     pub async fn answer(&mut self, sdp: RTCSessionDescription) -> Result<RTCSessionDescription> {
         if let Some(publisher) = &self.publisher {
-            if publisher.lock().await.signaling_state() != RTCSignalingState::Stable {
+            if publisher.signaling_state() != RTCSignalingState::Stable {
                 return Err(Error::ErrOfferIgnored.into());
             }
 
-            publisher.lock().await.answer(sdp).await
+            publisher.answer(sdp).await
         } else {
             return Err(Error::ErrNoTransportEstablished.into());
         }
@@ -409,13 +409,9 @@ impl PeerLocal {
         log::info!("peer local trickle, peer id:{}", self.id);
         match target {
             PUBLISHER => {
-                self.publisher
-                    .as_ref()
-                    .unwrap()
-                    .lock()
-                    .await
-                    .add_ice_candidata(candidate)
-                    .await?;
+                if let Some(publisher) = &self.publisher {
+                    publisher.add_ice_candidata(candidate).await?;
+                }
             }
             SUBSCRIBER => {
                 self.subscriber
@@ -466,7 +462,7 @@ impl PeerLocal {
         }
 
         if let Some(publisher) = &self.publisher {
-            publisher.lock().await.close().await;
+            publisher.close().await;
         }
         if let Some(subscriber) = &self.subscriber {
             subscriber.lock().await.close().await?;
@@ -477,7 +473,7 @@ impl PeerLocal {
     fn subscriber(self) -> Option<Arc<Mutex<Subscriber>>> {
         self.subscriber
     }
-    fn publisher(self) -> Option<Arc<Mutex<Publisher>>> {
+    fn publisher(self) -> Option<Arc<Publisher>> {
         self.publisher
     }
     fn session(self) -> Option<Arc<dyn Session + Send + Sync>> {

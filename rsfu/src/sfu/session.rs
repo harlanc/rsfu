@@ -319,8 +319,7 @@ impl Session for SessionLocal {
             }
 
             if let Some(publisher) = peer.publisher() {
-                let p = publisher.lock().await;
-                if p.relayed() {
+                if publisher.relayed() {
                     //todo
                 }
             }
@@ -406,7 +405,7 @@ impl Session for SessionLocal {
                 continue;
             }
 
-            let router = cur_peer.publisher().unwrap().lock().await.get_router();
+            let router = cur_peer.publisher().unwrap().get_router();
             if router
                 .add_down_tracks(peer.subscriber().unwrap(), None)
                 .await

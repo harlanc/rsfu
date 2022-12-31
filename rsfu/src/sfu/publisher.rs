@@ -69,10 +69,10 @@ pub struct Publisher {
 
     relayed: AtomicBool,
     relay_peers: Arc<Mutex<Vec<RelayPeer>>>,
-    candidates: Vec<RTCIceCandidateInit>,
+    candidates: Arc<Mutex<Vec<RTCIceCandidateInit>>>,
 
-    on_ice_connection_state_change_hander: Arc<Mutex<Option<OnIceConnectionStateChange>>>,
-    on_publisher_track: Arc<Mutex<Option<OnPublisherTrack>>>,
+    on_ice_connection_state_change_handler: Arc<Mutex<Option<OnIceConnectionStateChange>>>,
+    on_publisher_track_handler: Arc<Mutex<Option<OnPublisherTrack>>>,
 
     close_once: Once,
 }
@@ -140,9 +140,9 @@ impl Publisher {
 
             relayed: AtomicBool::new(false),
             relay_peers: Arc::new(Mutex::new(Vec::new())),
-            candidates: Vec::new(),
-            on_ice_connection_state_change_hander: Arc::default(),
-            on_publisher_track: Arc::default(),
+            candidates: Arc::new(Mutex::new(Vec::new())),
+            on_ice_connection_state_change_handler: Arc::default(),
+            on_publisher_track_handler: Arc::default(),
             close_once: Once::new(),
         };
 
@@ -294,7 +294,7 @@ impl Publisher {
         });
     }
 
-    pub async fn close(&mut self) {
+    pub async fn close(&self) {
         let peer_connection = self.pc.clone();
         let router = self.router.clone();
         let relay_peer = self.relay_peers.clone();
@@ -305,7 +305,7 @@ impl Publisher {
     pub async fn answer(&self, offer: RTCSessionDescription) -> Result<RTCSessionDescription> {
         self.pc.set_remote_description(offer).await?;
 
-        for c in &self.candidates {
+        for c in &*self.candidates.lock().await {
             if let Err(err) = self.pc.add_ice_candidate(c.clone()).await {}
         }
 
@@ -319,17 +319,17 @@ impl Publisher {
         self.router.clone()
     }
 
-    async fn on_publisher_track(&mut self, f: OnPublisherTrack) {
-        let mut handler = self.on_publisher_track.lock().await;
+    async fn on_publisher_track(&self, f: OnPublisherTrack) {
+        let mut handler = self.on_publisher_track_handler.lock().await;
         *handler = Some(f);
     }
 
-    pub async fn on_ice_candidate(&mut self, f: OnLocalCandidateHdlrFn) {
+    pub async fn on_ice_candidate(&self, f: OnLocalCandidateHdlrFn) {
         self.pc.on_ice_candidate(f).await;
     }
 
-    pub async fn on_ice_connection_state_change(&mut self, f: OnIceConnectionStateChange) {
-        let mut handler = self.on_ice_connection_state_change_hander.lock().await;
+    pub async fn on_ice_connection_state_change(&self, f: OnIceConnectionStateChange) {
+        let mut handler = self.on_ice_connection_state_change_handler.lock().await;
         *handler = Some(f);
     }
 
@@ -341,13 +341,11 @@ impl Publisher {
         self.pc.clone()
     }
 
-    //fn relay()
-
     async fn publisher_tracks(&self) -> Vec<PublisherTrack> {
         self.tracks.lock().await.clone()
     }
 
-    async fn add_relay_fanout_data_channel(&mut self, label: &String) {
+    async fn add_relay_fanout_data_channel(&self, label: &String) {
         for rp in &mut *self.relay_peers.lock().await {
             for dc in &rp.data_channels {
                 if dc.label() == label {
@@ -359,7 +357,7 @@ impl Publisher {
 
             if let Ok(dc) = rv {
                 let label_out = label.clone();
-                let session_out = Arc::clone(&mut self.session);
+                let session_out = Arc::clone(&self.session);
                 dc.on_message(Box::new(move |msg: DataChannelMessage| {
                     let session_in = Arc::clone(&session_out);
                     let label_in = label_out.clone();
@@ -401,12 +399,12 @@ impl Publisher {
         tracks
     }
 
-    pub async fn add_ice_candidata(&mut self, candidate: RTCIceCandidateInit) -> Result<()> {
+    pub async fn add_ice_candidata(&self, candidate: RTCIceCandidateInit) -> Result<()> {
         if let Some(desp) = self.pc.remote_description().await {
             self.pc.add_ice_candidate(candidate.clone()).await?;
         }
 
-        self.candidates.push(candidate.clone());
+        self.candidates.lock().await.push(candidate.clone());
 
         Ok(())
     }
