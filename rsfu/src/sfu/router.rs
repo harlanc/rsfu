@@ -72,12 +72,12 @@ pub trait Router {
     ) -> (Arc<dyn Receiver + Send + Sync>, bool);
     async fn add_down_tracks(
         &self,
-        s: Arc<Mutex<Subscriber>>,
+        s: Arc<Subscriber>,
         r: Option<Arc<dyn Receiver + Send + Sync>>,
     ) -> Result<()>;
     async fn add_down_track(
         &self,
-        s: Arc<Mutex<Subscriber>>,
+        s: Arc<Subscriber>,
         r: Arc<dyn Receiver + Send + Sync>,
     ) -> Result<Option<Arc<DownTrack>>>;
     async fn set_rtcp_writer(&self, writer: RtcpWriterFn);
@@ -399,7 +399,7 @@ impl Router for RouterLocal {
         }
         let layer = result_receiver
             .add_up_track(
-                track,
+                track.clone(),
                 buffer.clone(),
                 self.config.simulcast.best_quality_first,
             )
@@ -420,22 +420,60 @@ impl Router for RouterLocal {
                 },
             )
             .await;
+
+        let track_clone = track.clone();
+
+        tokio::spawn(async move {
+            let mut b = vec![0u8; 1500];
+            while let Ok((n, _)) = track_clone.read(&mut b).await {
+                println!("read size:{}", n);
+                // Unmarshal the packet and update the PayloadType
+                //   let mut buf = &b[..n];
+                // let mut rtp_packet = webrtc::rtp::packet::Packet::unmarshal(&mut buf)?;
+                // rtp_packet.header.payload_type = c.payload_type;
+
+                // // Marshal into original buffer with updated PayloadType
+
+                // let n = rtp_packet.marshal_to(&mut b)?;
+
+                // // Write
+                // if let Err(err) = c.conn.send(&b[..n]).await {
+                //     // For this particular example, third party applications usually timeout after a short
+                //     // amount of time during which the user doesn't have enough time to provide the answer
+                //     // to the browser.
+                //     // That's why, for this particular example, the user first needs to provide the answer
+                //     // to the browser then open the third party application. Therefore we must not kill
+                //     // the forward on "connection refused" errors
+                //     //if opError, ok := err.(*net.OpError); ok && opError.Err.Error() == "write: connection refused" {
+                //     //    continue
+                //     //}
+                //     //panic(err)
+                //     if err.to_string().contains("Connection refused") {
+                //         continue;
+                //     } else {
+                //         println!("conn send err: {}", err);
+                //         break;
+                //     }
+                // }
+            }
+
+            Result::<()>::Ok(())
+        });
         (result_receiver, publish)
     }
 
     async fn add_down_tracks(
         &self,
-        s: Arc<Mutex<Subscriber>>,
+        s: Arc<Subscriber>,
         r: Option<Arc<dyn Receiver + Send + Sync>>,
     ) -> Result<()> {
-        let sub = s.lock().await;
-        if sub.no_auto_subscribe {
+        if s.no_auto_subscribe {
             return Ok(());
         }
 
         if let Some(receiver) = r {
             self.add_down_track(s.clone(), receiver).await?;
-            sub.negotiate().await;
+            s.negotiate().await;
             return Ok(());
         }
 
@@ -451,7 +489,7 @@ impl Router for RouterLocal {
             for val in recs {
                 self.add_down_track(s.clone(), val.clone()).await?;
             }
-            sub.negotiate().await;
+            s.negotiate().await;
         }
 
         Ok(())
@@ -459,19 +497,19 @@ impl Router for RouterLocal {
 
     async fn add_down_track(
         &self,
-        s: Arc<Mutex<Subscriber>>,
+        s: Arc<Subscriber>,
         r: Arc<dyn Receiver + Send + Sync>,
     ) -> Result<(Option<Arc<DownTrack>>)> {
         let mut recv = r.clone();
-        let mut sub = s.lock().await;
-        for dt in sub.get_downtracks(recv.stream_id()).await.unwrap() {
+
+        for dt in s.get_downtracks(recv.stream_id()).await.unwrap() {
             if dt.id() == recv.track_id() {
                 return Ok(Some(dt));
             }
         }
 
         let codec = recv.codec();
-        sub.me.register_codec(codec.clone(), recv.kind())?;
+        s.me.register_codec(codec.clone(), recv.kind())?;
 
         let codec_capability = RTCRtpCodecCapability {
             mime_type: codec.capability.mime_type,
@@ -499,9 +537,8 @@ impl Router for RouterLocal {
 
         let down_track_arc = Arc::new(down_track_local);
 
-        let transceiver = sub
-            .pc
-            .add_transceiver_from_track(
+        let transceiver =
+            s.pc.add_transceiver_from_track(
                 down_track_arc.clone(),
                 &[RTCRtpTransceiverInit {
                     direction: RTCRtpTransceiverDirection::Sendonly,
@@ -510,7 +547,7 @@ impl Router for RouterLocal {
             )
             .await?;
 
-        let mut down_track = DownTrack::new_track_local(sub.id.clone(), down_track_arc);
+        let mut down_track = DownTrack::new_track_local(s.id.clone(), down_track_arc);
         down_track.set_transceiver(transceiver.clone());
 
         let down_track_arc = Arc::new(down_track);
@@ -527,18 +564,16 @@ impl Router for RouterLocal {
                 let transceiver_in = transceiver_out.clone();
                 let down_track_arc_in = down_track_arc_out.clone();
                 Box::pin(async move {
-                    let mut sub_in = s_in.lock().await;
-                    if sub_in.pc.connection_state() != RTCPeerConnectionState::Closed {
-                        let rv = sub_in
+                    if s_in.pc.connection_state() != RTCPeerConnectionState::Closed {
+                        let rv = s_in
                             .pc
                             .remove_track(&transceiver_in.sender().await.unwrap())
                             .await;
                         match rv {
                             Ok(_) => {
-                                sub_in
-                                    .remove_down_track(r_in.stream_id(), down_track_arc_in)
+                                s_in.remove_down_track(r_in.stream_id(), down_track_arc_in)
                                     .await;
-                                sub_in.negotiate().await;
+                                s_in.negotiate().await;
                             }
                             Err(err) => match err {
                                 RTCError::ErrConnectionClosed => {
@@ -561,16 +596,13 @@ impl Router for RouterLocal {
 
                 Box::pin(async move {
                     tokio::spawn(async move {
-                        s_in.lock()
-                            .await
-                            .send_stream_down_track_reports(r_in.stream_id())
-                            .await;
+                        s_in.send_stream_down_track_reports(r_in.stream_id()).await;
                     });
                 })
             }))
             .await;
 
-        sub.add_down_track(recv.stream_id(), down_track_arc.clone())
+        s.add_down_track(recv.stream_id(), down_track_arc.clone())
             .await;
         recv.add_down_track(down_track_arc, self.config.simulcast.best_quality_first)
             .await;

@@ -53,8 +53,8 @@ pub struct Subscriber {
     pub me: MediaEngine,
 
     tracks: Arc<Mutex<HashMap<String, Vec<Arc<DownTrack>>>>>,
-    channels: HashMap<String, Arc<RTCDataChannel>>,
-    candidates: Vec<RTCIceCandidateInit>,
+    channels: Arc<Mutex<HashMap<String, Arc<RTCDataChannel>>>>,
+    candidates: Arc<Mutex<Vec<RTCIceCandidateInit>>>,
     on_negotiate_handler: Arc<Mutex<Option<OnNegotiateFn>>>,
     pub no_auto_subscribe: bool,
 }
@@ -83,8 +83,8 @@ impl Subscriber {
             pc: Arc::new(pc),
             me: media_engine::get_subscriber_media_engine()?,
             tracks: Arc::new(Mutex::new(HashMap::new())),
-            channels: HashMap::new(),
-            candidates: Vec::new(),
+            channels: Arc::new(Mutex::new(HashMap::new())),
+            candidates: Arc::new(Mutex::new(Vec::new())),
             on_negotiate_handler: Arc::new(Mutex::new(None)),
             no_auto_subscribe: false,
         };
@@ -94,8 +94,12 @@ impl Subscriber {
         Ok(subscriber)
     }
 
+    pub fn id(&self) -> String {
+        self.id.clone()
+    }
+
     pub async fn add_data_channel(
-        &mut self,
+        &self,
         // subscriber: Arc<Mutex<Subscriber>>,
         dc: Arc<DataChannel>,
     ) -> Result<()> {
@@ -141,19 +145,22 @@ impl Subscriber {
         }))
         .await;
 
-        self.channels.insert(dc.label.clone(), ndc.clone());
+        self.channels
+            .lock()
+            .await
+            .insert(dc.label.clone(), ndc.clone());
 
         Ok(())
     }
 
-    pub fn data_channel(&self, label: String) -> Option<Arc<RTCDataChannel>> {
-        if let Some(rtc_data_channel) = self.channels.get(&label) {
+    pub async fn data_channel(&self, label: String) -> Option<Arc<RTCDataChannel>> {
+        if let Some(rtc_data_channel) = self.channels.lock().await.get(&label) {
             return Some(rtc_data_channel.clone());
         }
         None
     }
 
-    pub async fn on_negotiate(&mut self, f: OnNegotiateFn) {
+    pub async fn on_negotiate(&self, f: OnNegotiateFn) {
         let mut handler = self.on_negotiate_handler.lock().await;
         *handler = Some(f);
     }
@@ -169,17 +176,17 @@ impl Subscriber {
         self.pc.on_ice_candidate(f).await
     }
 
-    pub async fn add_ice_candidate(&mut self, candidate: RTCIceCandidateInit) -> Result<()> {
+    pub async fn add_ice_candidate(&self, candidate: RTCIceCandidateInit) -> Result<()> {
         if let Some(descripton) = self.pc.remote_description().await {
             self.pc.add_ice_candidate(candidate).await?;
             return Ok(());
         }
 
-        self.candidates.push(candidate);
+        self.candidates.lock().await.push(candidate);
         Ok(())
     }
 
-    pub async fn add_down_track(&mut self, stream_id: String, down_track: Arc<DownTrack>) {
+    pub async fn add_down_track(&self, stream_id: String, down_track: Arc<DownTrack>) {
         if let Some(dt) = self.tracks.lock().await.get_mut(&stream_id) {
             dt.push(down_track)
         } else {
@@ -187,7 +194,7 @@ impl Subscriber {
         }
     }
 
-    pub async fn remove_down_track(&mut self, stream_id: String, down_track: Arc<DownTrack>) {
+    pub async fn remove_down_track(&self, stream_id: String, down_track: Arc<DownTrack>) {
         if let Some(dts) = self.tracks.lock().await.get_mut(&stream_id) {
             let mut idx: i16 = -1;
 
@@ -204,8 +211,8 @@ impl Subscriber {
         }
     }
 
-    async fn add_data_channel_by_label(&mut self, label: String) -> Result<Arc<RTCDataChannel>> {
-        if let Some(channel) = self.channels.get(&label) {
+    async fn add_data_channel_by_label(&self, label: String) -> Result<Arc<RTCDataChannel>> {
+        if let Some(channel) = self.channels.lock().await.get(&label) {
             return Ok(channel.clone());
         }
 
@@ -213,31 +220,31 @@ impl Subscriber {
             .pc
             .create_data_channel(&label, Some(RTCDataChannelInit::default()))
             .await?;
-        self.channels.insert(label, channel.clone());
+        self.channels.lock().await.insert(label, channel.clone());
         Ok(channel)
     }
 
-    pub async fn set_remote_description(&mut self, desc: RTCSessionDescription) -> Result<()> {
+    pub async fn set_remote_description(&self, desc: RTCSessionDescription) -> Result<()> {
         self.pc.set_remote_description(desc).await?;
 
-        for candidate in &self.candidates {
+        for candidate in &*self.candidates.lock().await {
             self.pc.add_ice_candidate(candidate.clone()).await?;
         }
 
-        self.candidates.clear();
+        self.candidates.lock().await.clear();
 
         Ok(())
     }
 
-    pub fn register_data_channel(&mut self, label: String, dc: Arc<RTCDataChannel>) {
-        self.channels.insert(label, dc);
+    pub async fn register_data_channel(&self, label: String, dc: Arc<RTCDataChannel>) {
+        self.channels.lock().await.insert(label, dc);
     }
 
-    pub fn get_data_channel(&self, label: String) -> Option<Arc<RTCDataChannel>> {
-        self.data_channel(label)
+    pub async fn get_data_channel(&self, label: String) -> Option<Arc<RTCDataChannel>> {
+        self.data_channel(label).await
     }
 
-    async fn downtracks(&mut self) -> Vec<Arc<DownTrack>> {
+    async fn downtracks(&self) -> Vec<Arc<DownTrack>> {
         let mut downtracks: Vec<Arc<DownTrack>> = Vec::new();
         for (_, v) in &mut *self.tracks.lock().await {
             downtracks.append(v);
@@ -254,11 +261,13 @@ impl Subscriber {
         }
     }
 
-    pub async fn negotiate(&self) {
+    pub async fn negotiate(&self) -> Result<()> {
+        println!("on_offer negotiate");
         let mut handler = self.on_negotiate_handler.lock().await;
         if let Some(f) = &mut *handler {
-            f().await;
+            f().await?;
         }
+        Ok(())
     }
 
     async fn on_ice_connection_state_change(&self) {
@@ -373,18 +382,21 @@ impl Subscriber {
         });
     }
 
-    pub async fn close(&mut self) -> Result<()> {
+    pub async fn close(&self) -> Result<()> {
         self.pc.close().await.map_err(anyhow::Error::msg)?;
         Ok(())
     }
 
-    pub async fn add_data_channel_2(&mut self, label: String) -> Result<Arc<RTCDataChannel>> {
-        if let Some(channel) = self.channels.get(&label) {
+    pub async fn add_data_channel_2(&self, label: String) -> Result<Arc<RTCDataChannel>> {
+        if let Some(channel) = self.channels.lock().await.get(&label) {
             return Ok(channel.clone());
         }
 
         let data_channel = self.pc.create_data_channel(label.as_str(), None).await?;
-        self.channels.insert(label, data_channel.clone());
+        self.channels
+            .lock()
+            .await
+            .insert(label, data_channel.clone());
 
         Ok(data_channel)
     }

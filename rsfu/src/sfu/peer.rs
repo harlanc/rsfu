@@ -47,10 +47,10 @@ pub type OnIceConnectionStateChangeFn = Box<
 
 #[async_trait]
 pub trait Peer {
-    fn id(&self) -> String;
-    fn session(&self) -> Option<Arc<dyn Session + Send + Sync>>;
-    fn publisher(&self) -> Option<Arc<Publisher>>;
-    fn subscriber(&self) -> Option<Arc<Mutex<Subscriber>>>;
+    async fn id(&self) -> String;
+    async fn session(&self) -> Option<Arc<dyn Session + Send + Sync>>;
+    async fn publisher(&self) -> Option<Arc<Publisher>>;
+    async fn subscriber(&self) -> Option<Arc<Subscriber>>;
     //fn close() -> Result<()>;
     //no used now
     //fn send_data_channel_message(label: String, msg: Bytes) -> Result<()>;
@@ -88,12 +88,12 @@ pub struct ChannelAPIMessage {
 
 // #[derive(Default)]
 pub struct PeerLocal {
-    id: String,
-    session: Option<Arc<dyn Session + Send + Sync>>,
+    id: Arc<Mutex<String>>,
+    session: Arc<Mutex<Option<Arc<dyn Session + Send + Sync>>>>,
     closed: Arc<AtomicBool>,
     provider: Arc<Mutex<dyn SessionProvider + Send + Sync>>,
-    publisher: Option<Arc<Publisher>>,
-    subscriber: Option<Arc<Mutex<Subscriber>>>,
+    publisher: Arc<Mutex<Option<Arc<Publisher>>>>,
+    subscriber: Arc<Mutex<Option<Arc<Subscriber>>>>,
 
     pub on_offer_handler: Arc<Mutex<Option<OnOfferFn>>>,
     pub on_ice_candidate_handler: Arc<Mutex<Option<OnIceCandidateFn>>>,
@@ -104,25 +104,24 @@ pub struct PeerLocal {
 }
 #[async_trait]
 impl Peer for PeerLocal {
-    fn id(&self) -> String {
-        self.id.clone()
+    async fn id(&self) -> String {
+        self.id.lock().await.clone()
     }
 
-    fn session(&self) -> Option<Arc<dyn Session + Send + Sync>> {
-        self.session.clone()
+    async fn session(&self) -> Option<Arc<dyn Session + Send + Sync>> {
+        self.session.lock().await.clone()
     }
 
-    fn subscriber(&self) -> Option<Arc<Mutex<Subscriber>>> {
-        self.subscriber.clone()
+    async fn subscriber(&self) -> Option<Arc<Subscriber>> {
+        self.subscriber.lock().await.clone()
     }
 
-    fn publisher(&self) -> Option<Arc<Publisher>> {
-        self.publisher.clone()
+    async fn publisher(&self) -> Option<Arc<Publisher>> {
+        self.publisher.lock().await.clone()
+        // fn as_peer(&self) -> &(dyn Peer + Send + Sync) {
+        //     self as &(dyn Peer + Send + Sync)
+        // }
     }
-
-    // fn as_peer(&self) -> &(dyn Peer + Send + Sync) {
-    //     self as &(dyn Peer + Send + Sync)
-    // }
 }
 
 // fn NewPeer() //-> (impl Peer + Send + Sync)
@@ -157,14 +156,14 @@ impl Peer for PeerLocal {
 // }
 
 impl PeerLocal {
-    pub fn new(provider: Arc<Mutex<dyn SessionProvider + Send + Sync>>) -> Self {
+    pub async fn new(provider: Arc<Mutex<dyn SessionProvider + Send + Sync>>) -> Result<PeerLocal> {
         let peer_local = PeerLocal {
-            id: String::from(""),
-            session: None,
+            id: Arc::new(Mutex::new(String::from(""))),
+            session: Arc::new(Mutex::new(None)),
             closed: Arc::new(AtomicBool::new(false)),
             provider,
-            publisher: None,
-            subscriber: None,
+            publisher: Arc::new(Mutex::new(None)),
+            subscriber: Arc::new(Mutex::new(None)),
 
             on_offer_handler: Arc::new(Mutex::new(None)),
             on_ice_candidate_handler: Arc::new(Mutex::new(None)),
@@ -174,7 +173,7 @@ impl PeerLocal {
             negotiation_pending: Arc::new(AtomicBool::new(false)),
         };
 
-        peer_local
+        Ok(peer_local)
     }
 
     // pub async fn join_after(self: &Arc<Mutex<Self>>) {
@@ -204,9 +203,9 @@ impl PeerLocal {
         *handler = Some(f);
     }
 
-    pub async fn join(&mut self, sid: String, uid: String, cfg: JoinConfig) -> Result<()> {
+    pub async fn join(&self, sid: String, uid: String, cfg: JoinConfig) -> Result<()> {
         log::info!("join begin...");
-        if !self.session.is_none() {
+        if self.session.lock().await.is_some() {
             return Err(Error::ErrTransportExists.into());
         }
 
@@ -215,11 +214,14 @@ impl PeerLocal {
             uuid = Uuid::new_v4().to_string();
         }
 
-        self.id = uuid;
+        // let id = &mut *self.id.lock().await;
+        // id = &mut uuid;
 
-        let mut provider = self.provider.lock().await;
+        *self.id.lock().await = uuid;
 
-        let (s, webrtc_transport_cfg) = provider.get_session(sid).await;
+        let provider = self.provider.lock().await;
+
+        let (cur_session, webrtc_transport_cfg) = provider.get_session(sid).await;
 
         let rtc_config_clone = RTCConfiguration {
             ice_servers: webrtc_transport_cfg.configuration.ice_servers.clone(),
@@ -233,14 +235,13 @@ impl PeerLocal {
             factory: Arc::new(Mutex::new(AtomicFactory::new(1000, 1000))),
         };
 
-        self.session = s;
+        *self.session.lock().await = cur_session.clone();
 
         if !cfg.no_subscribe {
-            let subscriber = Arc::new(Mutex::new(
-                Subscriber::new(self.id.clone(), webrtc_transport_cfg).await?,
-            ));
-
-            subscriber.lock().await.no_auto_subscribe = cfg.no_auto_subscribe;
+            let mut raw_subscriber =
+                Subscriber::new(self.id.lock().await.clone(), webrtc_transport_cfg).await?;
+            raw_subscriber.no_auto_subscribe = cfg.no_auto_subscribe;
+            let subscriber = Arc::new(raw_subscriber);
 
             let remote_answer_pending_out = self.remote_answer_pending.clone();
             let negotiation_pending_out = self.negotiation_pending.clone();
@@ -249,9 +250,9 @@ impl PeerLocal {
             let sub = Arc::clone(&subscriber);
             let on_offer_handler_out = self.on_offer_handler.clone();
 
+            println!("on_offer 0");
+
             subscriber
-                .lock()
-                .await
                 .on_negotiate(Box::new(move || {
                     let remote_answer_pending_in = remote_answer_pending_out.clone();
                     let negotiation_pending_in = negotiation_pending_out.clone();
@@ -259,16 +260,16 @@ impl PeerLocal {
 
                     let sub_in = sub.clone();
                     let on_offer_handler_in = on_offer_handler_out.clone();
-
+                    println!("on_offer 1");
                     Box::pin(async move {
                         if remote_answer_pending_in.load(Ordering::Relaxed) {
                             (*negotiation_pending_in).store(true, Ordering::Relaxed);
                             return Ok(());
                         }
 
-                        let offer = sub_in.lock().await.create_offer().await?;
+                        let offer = sub_in.create_offer().await?;
                         (*remote_answer_pending_in).store(true, Ordering::Relaxed);
-
+                        println!("on_offer 2");
                         if let Some(on_offer) = &mut *on_offer_handler_in.lock().await {
                             if !closed_in.load(Ordering::Relaxed) {
                                 on_offer(offer).await;
@@ -283,8 +284,6 @@ impl PeerLocal {
             let on_ice_candidate_out = self.on_ice_candidate_handler.clone();
             let closed_out_1 = self.closed.clone();
             subscriber
-                .lock()
-                .await
                 .on_ice_candidate(Box::new(move |candidate: Option<RTCIceCandidate>| {
                     let on_ice_candidate_in = on_ice_candidate_out.clone();
                     let closed_in = closed_out_1.clone();
@@ -303,29 +302,31 @@ impl PeerLocal {
                     })
                 }))
                 .await;
-
-            self.subscriber = Some(subscriber);
+            *self.subscriber.lock().await = Some(subscriber);
         }
 
         if !cfg.no_publish {
             if !cfg.no_subscribe {
-                let session_mutex = self.session.as_ref().unwrap();
-                for dc in &*session_mutex.get_data_channel_middlewares().lock().await {
-                    if let Some(subscriber) = &self.subscriber {
-                        subscriber.lock().await.add_data_channel(dc.clone()).await?;
+                if let Some(session) = cur_session.clone() {
+                    for dc in &*session.get_data_channel_middlewares().lock().await {
+                        if let Some(sub) = &*self.subscriber.lock().await {
+                            sub.add_data_channel(dc.clone()).await?;
+                        }
                     }
-                    // let subscriber = self.subscriber.unwrap().lock().await;
                 }
+                //let session_mutex = self.session.lock().await.as_ref().unwrap();
             }
             let on_ice_candidate_out = self.on_ice_candidate_handler.clone();
             let closed_out_1 = self.closed.clone();
 
-            let mut publisher = Publisher::new(
-                self.id.clone(),
-                self.session.as_ref().unwrap().clone(),
-                config_clone,
-            )
-            .await?;
+            let publisher = Arc::new(
+                Publisher::new(
+                    self.id.lock().await.clone(),
+                    cur_session.clone().unwrap(),
+                    config_clone,
+                )
+                .await?,
+            );
 
             publisher
                 .on_ice_candidate(Box::new(move |candidate: Option<RTCIceCandidate>| {
@@ -366,14 +367,14 @@ impl PeerLocal {
                     })
                 }))
                 .await;
-            self.publisher = Some(Arc::new(publisher));
+            *self.publisher.lock().await = Some(publisher);
         }
 
         Ok(())
     }
 
     pub async fn answer(&mut self, sdp: RTCSessionDescription) -> Result<RTCSessionDescription> {
-        if let Some(publisher) = &self.publisher {
+        if let Some(publisher) = &*self.publisher.lock().await {
             if publisher.signaling_state() != RTCSignalingState::Stable {
                 return Err(Error::ErrOfferIgnored.into());
             }
@@ -385,14 +386,14 @@ impl PeerLocal {
     }
 
     pub async fn set_remote_description(&mut self, sdp: RTCSessionDescription) -> Result<()> {
-        if let Some(subscriber) = &self.subscriber {
-            log::info!("peer local got answer, peer id:{}", self.id);
-            subscriber.lock().await.set_remote_description(sdp).await?;
+        if let Some(subscriber) = &*self.subscriber.lock().await {
+            log::info!("peer local got answer, peer id:{}", self.id.lock().await);
+            subscriber.set_remote_description(sdp).await?;
             self.remote_answer_pending.store(false, Ordering::Relaxed);
 
             if self.negotiation_pending.load(Ordering::Relaxed) {
                 self.negotiation_pending.store(false, Ordering::Relaxed);
-                subscriber.lock().await.negotiate().await;
+                subscriber.negotiate().await;
             }
         } else {
             return Err(Error::ErrNoTransportEstablished.into());
@@ -402,25 +403,23 @@ impl PeerLocal {
     }
 
     pub async fn trickle(&mut self, candidate: RTCIceCandidateInit, target: u8) -> Result<()> {
-        if self.subscriber.is_none() || self.publisher.is_none() {
+        let subscriber = self.subscriber.lock().await;
+        let publisher = self.publisher.lock().await;
+        if subscriber.is_none() || publisher.is_none() {
             return Err(Error::ErrNoTransportEstablished.into());
         }
 
-        log::info!("peer local trickle, peer id:{}", self.id);
+        log::info!("peer local trickle, peer id:{}", self.id.lock().await);
         match target {
             PUBLISHER => {
-                if let Some(publisher) = &self.publisher {
+                if let Some(publisher) = &*publisher {
                     publisher.add_ice_candidata(candidate).await?;
                 }
             }
             SUBSCRIBER => {
-                self.subscriber
-                    .as_ref()
-                    .unwrap()
-                    .lock()
-                    .await
-                    .add_ice_candidate(candidate)
-                    .await?;
+                if let Some(subscriber) = &*subscriber {
+                    subscriber.add_ice_candidate(candidate).await?;
+                }
             }
             _ => {}
         }
@@ -428,17 +427,12 @@ impl PeerLocal {
     }
 
     async fn send_data_channel_message(&mut self, label: String, msg: String) -> Result<()> {
-        if self.subscriber.is_none() {
+        let subscriber = self.subscriber.lock().await;
+        if subscriber.is_none() {
             return Err(Error::ErrNoSubscriber.into());
         }
 
-        let dc = self
-            .subscriber
-            .as_ref()
-            .unwrap()
-            .lock()
-            .await
-            .data_channel(label);
+        let dc = subscriber.as_ref().unwrap().data_channel(label).await;
 
         if dc.is_none() {
             return Err(Error::ErrDataChannelNotExists.into());
@@ -455,31 +449,33 @@ impl PeerLocal {
         }
         self.closed.store(true, Ordering::Relaxed);
 
-        if let Some(session) = &self.session {
+        if let Some(session) = &*self.session.lock().await {
             session
                 .remove_peer(Arc::clone(self) as Arc<dyn Peer + Send + Sync>)
                 .await;
         }
 
-        if let Some(publisher) = &self.publisher {
+        if let Some(publisher) = &*self.publisher.lock().await {
             publisher.close().await;
         }
-        if let Some(subscriber) = &self.subscriber {
-            subscriber.lock().await.close().await?;
+
+        if let Some(subscriber) = &*self.subscriber.lock().await {
+            subscriber.close().await?;
         }
+
         Ok(())
     }
 
-    fn subscriber(self) -> Option<Arc<Mutex<Subscriber>>> {
-        self.subscriber
-    }
-    fn publisher(self) -> Option<Arc<Publisher>> {
-        self.publisher
-    }
-    fn session(self) -> Option<Arc<dyn Session + Send + Sync>> {
-        self.session
-    }
-    fn id(self) -> String {
-        self.id
+    // fn subscriber(self) -> Arc<Mutex<Subscriber>> {
+    //     self.subscriber
+    // }
+    // fn publisher(self) -> Option<Arc<Publisher>> {
+    //     self.publisher
+    // }
+    // fn session(self) -> Option<Arc<dyn Session + Send + Sync>> {
+    //     self.session.lock
+    // }
+    async fn id(self) -> String {
+        self.id.lock().await.clone()
     }
 }
