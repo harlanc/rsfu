@@ -50,7 +50,7 @@ pub type OnNegotiateFn =
 pub struct Subscriber {
     pub id: String,
     pub pc: Arc<RTCPeerConnection>,
-    pub me: MediaEngine,
+    pub me: Arc<Mutex<MediaEngine>>,
 
     tracks: Arc<Mutex<HashMap<String, Vec<Arc<DownTrack>>>>>,
     channels: Arc<Mutex<HashMap<String, Arc<RTCDataChannel>>>>,
@@ -81,7 +81,7 @@ impl Subscriber {
         let subscriber = Subscriber {
             id,
             pc: Arc::new(pc),
-            me: media_engine::get_subscriber_media_engine()?,
+            me: Arc::new(Mutex::new(media_engine::get_subscriber_media_engine()?)),
             tracks: Arc::new(Mutex::new(HashMap::new())),
             channels: Arc::new(Mutex::new(HashMap::new())),
             candidates: Arc::new(Mutex::new(Vec::new())),

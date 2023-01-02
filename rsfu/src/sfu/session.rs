@@ -38,7 +38,7 @@ pub trait Session {
         router: Arc<dyn Router + Send + Sync>,
         r: Arc<dyn Receiver + Send + Sync>,
     );
-    async fn subscribe(&mut self, peer: Arc<dyn Peer + Send + Sync>);
+    async fn subscribe(&self, peer: Arc<dyn Peer + Send + Sync>);
     async fn add_peer(&self, peer: Arc<dyn Peer + Send + Sync>);
     async fn get_peer(&self, peer_id: String) -> Option<Arc<dyn Peer + Send + Sync>>;
     async fn remove_peer(&self, peer: Arc<dyn Peer + Send + Sync>);
@@ -362,7 +362,7 @@ impl Session for SessionLocal {
             }
         }
     }
-    async fn subscribe(&mut self, peer: Arc<dyn Peer + Send + Sync>) {
+    async fn subscribe(&self, peer: Arc<dyn Peer + Send + Sync>) {
         let fanout_data_channels = self.fanout_data_channels.lock().await;
         for label in &*fanout_data_channels {
             if let Some(subscriber) = peer.subscriber().await {

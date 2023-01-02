@@ -156,7 +156,7 @@ impl Peer for PeerLocal {
 // }
 
 impl PeerLocal {
-    pub async fn new(provider: Arc<Mutex<dyn SessionProvider + Send + Sync>>) -> Result<PeerLocal> {
+    pub fn new(provider: Arc<Mutex<dyn SessionProvider + Send + Sync>>) -> PeerLocal {
         let peer_local = PeerLocal {
             id: Arc::new(Mutex::new(String::from(""))),
             session: Arc::new(Mutex::new(None)),
@@ -173,7 +173,7 @@ impl PeerLocal {
             negotiation_pending: Arc::new(AtomicBool::new(false)),
         };
 
-        Ok(peer_local)
+        peer_local
     }
 
     // pub async fn join_after(self: &Arc<Mutex<Self>>) {
@@ -203,7 +203,7 @@ impl PeerLocal {
         *handler = Some(f);
     }
 
-    pub async fn join(&self, sid: String, uid: String, cfg: JoinConfig) -> Result<()> {
+    pub async fn join(self: &Arc<Self>, sid: String, uid: String, cfg: JoinConfig) -> Result<()> {
         log::info!("join begin...");
         if self.session.lock().await.is_some() {
             return Err(Error::ErrTransportExists.into());
@@ -370,10 +370,16 @@ impl PeerLocal {
             *self.publisher.lock().await = Some(publisher);
         }
 
+        cur_session.clone().unwrap().add_peer(self.clone()).await;
+
+        if !cfg.no_subscribe {
+            cur_session.clone().unwrap().subscribe(self.clone()).await;
+        }
+
         Ok(())
     }
 
-    pub async fn answer(&mut self, sdp: RTCSessionDescription) -> Result<RTCSessionDescription> {
+    pub async fn answer(&self, sdp: RTCSessionDescription) -> Result<RTCSessionDescription> {
         if let Some(publisher) = &*self.publisher.lock().await {
             if publisher.signaling_state() != RTCSignalingState::Stable {
                 return Err(Error::ErrOfferIgnored.into());
@@ -385,7 +391,7 @@ impl PeerLocal {
         }
     }
 
-    pub async fn set_remote_description(&mut self, sdp: RTCSessionDescription) -> Result<()> {
+    pub async fn set_remote_description(&self, sdp: RTCSessionDescription) -> Result<()> {
         if let Some(subscriber) = &*self.subscriber.lock().await {
             log::info!("peer local got answer, peer id:{}", self.id.lock().await);
             subscriber.set_remote_description(sdp).await?;
@@ -402,7 +408,7 @@ impl PeerLocal {
         Ok(())
     }
 
-    pub async fn trickle(&mut self, candidate: RTCIceCandidateInit, target: u8) -> Result<()> {
+    pub async fn trickle(& self, candidate: RTCIceCandidateInit, target: u8) -> Result<()> {
         let subscriber = self.subscriber.lock().await;
         let publisher = self.publisher.lock().await;
         if subscriber.is_none() || publisher.is_none() {

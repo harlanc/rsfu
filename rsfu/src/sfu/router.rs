@@ -509,7 +509,7 @@ impl Router for RouterLocal {
         }
 
         let codec = recv.codec();
-        s.me.register_codec(codec.clone(), recv.kind())?;
+        s.me.lock().await.register_codec(codec.clone(), recv.kind())?;
 
         let codec_capability = RTCRtpCodecCapability {
             mime_type: codec.capability.mime_type,

@@ -36,7 +36,7 @@ async fn main() -> Result<()> {
 
         JsonRpc2::new(
             Box::new(server_stream),
-            Some(Box::new(JsonSignal { peer_local })),
+            Some(Box::new(JsonSignal::new(peer_local))),
         )
         .await;
     }

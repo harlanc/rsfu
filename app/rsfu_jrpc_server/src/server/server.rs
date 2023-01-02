@@ -44,12 +44,12 @@ pub struct Trickle {
 }
 
 pub struct JsonSignal {
-    pub peer_local: PeerLocal,
+    pub peer_local: Arc<PeerLocal>,
 }
 
 impl JsonSignal {
-    fn new(p: PeerLocal) -> Self {
-        Self { peer_local: p }
+    pub fn new(p: PeerLocal) -> Self {
+        Self { peer_local: Arc::new(p) }
     }
 }
 
