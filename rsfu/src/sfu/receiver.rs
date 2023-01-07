@@ -17,7 +17,7 @@ use webrtc_util::marshal::{Marshal, MarshalSize, Unmarshal};
 use super::errors::Error;
 use super::errors::Result;
 use super::helpers;
-use crate::buffer::buffer::Buffer;
+use crate::buffer::buffer::AtomicBuffer;
 use rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use rtp::packet::Packet as RTCPacket;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU32, Ordering};
@@ -59,7 +59,7 @@ pub trait Receiver: Send + Sync {
     async fn add_up_track(
         &self,
         track: Arc<TrackRemote>,
-        buffer: Arc<Mutex<Buffer>>,
+        buffer: Arc<AtomicBuffer>,
         best_quality_first: bool,
     ) -> Option<usize>;
     async fn add_down_track(&self, track: Arc<DownTrack>, best_quality_first: bool);
@@ -93,7 +93,7 @@ pub struct WebRTCReceiver {
     pub receiver: Arc<RTCRtpReceiver>,
     codec: RTCRtpCodecParameters,
     rtcp_sender: Arc<RtcpDataSender>,
-    buffers: Arc<Mutex<[Option<Arc<Mutex<Buffer>>>; 3]>>,
+    buffers: Arc<Mutex<[Option<Arc<AtomicBuffer>>; 3]>>,
     up_tracks: Arc<Mutex<[Option<Arc<TrackRemote>>; 3]>>,
     stats: [Option<Stream>; 3],
     available: Arc<Mutex<[AtomicBool; 3]>>,
@@ -180,7 +180,7 @@ impl Receiver for WebRTCReceiver {
     async fn add_up_track(
         &self,
         track: Arc<TrackRemote>,
-        buffer: Arc<Mutex<Buffer>>,
+        buffer: Arc<AtomicBuffer>,
         best_quality_first: bool,
     ) -> Option<usize> {
         if self.closed.load(Ordering::Acquire) {
@@ -304,7 +304,7 @@ impl Receiver for WebRTCReceiver {
         let mut bitrates = Vec::new();
         for buff in &*self.buffers.lock().await {
             if let Some(b) = buff {
-                bitrates.push(b.lock().await.bitrate)
+                bitrates.push(b.bitrate().await)
             }
         }
         bitrates
@@ -315,7 +315,7 @@ impl Receiver for WebRTCReceiver {
         for (idx, a) in self.available.lock().await.iter().enumerate() {
             if a.load(Ordering::Relaxed) {
                 if let Some(buff) = &self.buffers.lock().await[idx] {
-                    temporal_layers.push(buff.lock().await.max_temporal_layer)
+                    temporal_layers.push(buff.max_temporal_layer().await)
                 }
             }
         }
@@ -374,7 +374,7 @@ impl Receiver for WebRTCReceiver {
         let mut rtp_ts = 0;
         let mut ntp_ts = 0;
         if let Some(buffer) = &self.buffers.lock().await[layer] {
-            (rtp_ts, ntp_ts, _) = buffer.lock().await.get_sender_report_data();
+            (rtp_ts, ntp_ts, _) = buffer.get_sender_report_data().await;
         }
         (rtp_ts, ntp_ts)
     }
@@ -386,8 +386,8 @@ impl Receiver for WebRTCReceiver {
         for packet in packets {
             if let Some(buffer) = &self.buffers.lock().await[packet.layer as usize] {
                 let mut data = vec![0_u8; 65535];
-                let mut buffer_raw = buffer.lock().await;
-                if let Ok(size) = buffer_raw.get_packet(&mut data[..], packet.source_seq_no) {
+
+                if let Ok(size) = buffer.get_packet(&mut data[..], packet.source_seq_no).await {
                     let mut raw_data = Vec::new();
                     raw_data.extend_from_slice(&data[..size]);
 
@@ -452,9 +452,11 @@ impl Receiver for WebRTCReceiver {
     async fn write_rtp(&self, layer: usize) -> Result<()> {
         loop {
             if let Some(buffer) = &self.buffers.lock().await[layer] {
-                let mut buffer_raw = buffer.lock().await;
-                match buffer_raw.read_extended().await {
+                println!("write_rtp 0");
+ 
+                match buffer.read_extended().await {
                     Ok(pkt) => {
+                        println!("write_rtp 1");
                         if self.is_simulcast && self.pending[layer].load(Ordering::Relaxed) {
                             if pkt.key_frame {
                                 //use tmp_val here just to skip the build error
@@ -508,8 +510,9 @@ impl Receiver for WebRTCReceiver {
                         }
                     }
                     Err(e) => match e {
-                        SfuBufferError::ErrIOEof => {}
-                        _ => {}
+                        
+                        SfuBufferError::ErrIOEof => {    println!("write_rtp 1");}
+                        _ => {    println!("write_rtp 2");}
                     },
                 }
             }

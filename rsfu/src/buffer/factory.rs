@@ -1,4 +1,5 @@
 use super::buffer::Buffer;
+use super::buffer::AtomicBuffer;
 use super::buffer::BufferPacketType;
 use super::buffer_io::BufferIO;
 use super::rtcpreader::RTCPReader;
@@ -10,7 +11,7 @@ use tokio::sync::Mutex;
 pub struct Factory {
     video_pool_size: usize,
     audio_pool_size: usize,
-    pub rtp_buffers: HashMap<u32, Arc<Mutex<Buffer>>>,
+    pub rtp_buffers: HashMap<u32, Arc<AtomicBuffer>>,
     pub rtcp_readers: HashMap<u32, Arc<Mutex<RTCPReader>>>,
 }
 #[derive(Default)]
@@ -74,14 +75,14 @@ impl AtomicFactory {
         &self,
         // packet_type: BufferPacketType,
         ssrc: u32,
-    ) -> Arc<Mutex<Buffer>> {
+    ) -> Arc<AtomicBuffer> {
         let factory = &mut self.factory.lock().await;
 
         if let Some(reader) = factory.rtp_buffers.get_mut(&ssrc) {
             return reader.clone();
         }
 
-        let reader = Arc::new(Mutex::new(Buffer::new(ssrc)));
+        let reader = Arc::new(AtomicBuffer::new(ssrc));
         factory.rtp_buffers.insert(ssrc, reader.clone());
 
         reader

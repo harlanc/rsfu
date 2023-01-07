@@ -9,6 +9,7 @@ use super::session::Session;
 use super::sfu::WebRTCTransportConfig;
 use super::subscriber::Subscriber;
 use crate::buffer::buffer::Options as BufferOptions;
+use crate::buffer::buffer_io::BufferIO;
 use crate::buffer::factory::AtomicFactory;
 use crate::stats::stream::Stream;
 use crate::twcc::twcc::Responder;
@@ -186,8 +187,6 @@ impl Router for RouterLocal {
 
         let sender_for_buffer = Arc::clone(&self.rtcp_sender_channel);
         buffer
-            .lock()
-            .await
             .on_feedback_callback(Box::new(
                 move |packets: Vec<Box<dyn RtcpPacket + Send + Sync>>| {
                     let sender_for_buffer_in = Arc::clone(&sender_for_buffer);
@@ -197,14 +196,12 @@ impl Router for RouterLocal {
                 },
             ))
             .await;
-
+        //println!("add_receiver 0....");
         match track.kind() {
             RTPCodecType::Audio => {
                 let session_out = Arc::clone(&self.session);
                 let stream_id_out = stream_id.clone();
                 buffer
-                    .lock()
-                    .await
                     .on_audio_level(Box::new(move |level: u8| {
                         let session_in = Arc::clone(&session_out);
                         let stream_id_in = stream_id_out.clone();
@@ -241,8 +238,6 @@ impl Router for RouterLocal {
 
                 let twcc_out = Arc::clone(&self.twcc);
                 buffer
-                    .lock()
-                    .await
                     .on_transport_wide_cc(Box::new(move |sn: u16, time_ns: i64, marker: bool| {
                         let twcc_in = Arc::clone(&twcc_out);
                         Box::pin(async move {
@@ -255,7 +250,7 @@ impl Router for RouterLocal {
             }
             RTPCodecType::Unspecified => {}
         }
-
+        //println!("add_receiver 1....");
         if self.config.with_stats {
             let stream = Stream::new(Arc::clone(&buffer));
             self.stats.lock().await.insert(track.ssrc(), stream);
@@ -269,7 +264,7 @@ impl Router for RouterLocal {
         let stats_out = Arc::clone(&self.stats);
         let buffer_out = Arc::clone(&buffer);
         let with_status = self.config.with_stats;
-
+        //println!("add_receiver 2....");
         rtcp_reader
             .lock()
             .await
@@ -308,7 +303,7 @@ impl Router for RouterLocal {
                             pkt.as_any()
                                 .downcast_ref::<rtcp::sender_report::SenderReport>()
                         {
-                            buffer_in.lock().await.set_sender_report_data(
+                            buffer_in.set_sender_report_data(
                                 sender_report.rtp_time,
                                 sender_report.ntp_time,
                             );
@@ -327,17 +322,20 @@ impl Router for RouterLocal {
             .await;
 
         let result_receiver;
-
-        if let Some(recv) = self.receivers.lock().await.get(&track_id) {
+        //println!("add_receiver 3....");
+        let mut receivers = self.receivers.lock().await;
+        if let Some(recv) = receivers.get(&track_id) {
+            //println!("add_receiver 3.1....");
             result_receiver = recv.clone();
         } else {
+            // println!("add_receiver 3.2....");
             let mut rv =
                 WebRTCReceiver::new(receiver.clone(), track.clone(), self.id.clone()).await;
             rv.set_rtcp_channel(self.rtcp_sender_channel.clone());
             let recv_kind = rv.kind();
             let session_out = self.session.clone();
             let stream_id = track.stream_id().await;
-
+            //println!("add_receiver 3.3....");
             let receivers_out = self.receivers.clone();
             let stats_out = self.stats.clone();
             let del_handler_out = self.on_add_receiver_track_handler.clone();
@@ -385,18 +383,17 @@ impl Router for RouterLocal {
             }))
             .await;
             result_receiver = Arc::new(rv);
-
-            self.receivers
-                .lock()
-                .await
-                .insert(track_id, result_receiver.clone());
+            //println!("add_receiver 3.4....");
+            receivers.insert(track_id, result_receiver.clone());
 
             publish = true;
-
+            //println!("add_receiver 3.5....");
             if let Some(f) = &mut *self.on_add_receiver_track_handler.lock().await {
+                println!("add_receiver 3.6....");
                 f(result_receiver.clone());
             }
         }
+        //println!("add_receiver 4....");
         let layer = result_receiver
             .add_up_track(
                 track.clone(),
@@ -411,8 +408,6 @@ impl Router for RouterLocal {
         }
 
         buffer
-            .lock()
-            .await
             .bind(
                 receiver.get_parameters().await,
                 BufferOptions {
@@ -422,11 +417,16 @@ impl Router for RouterLocal {
             .await;
 
         let track_clone = track.clone();
+        let buffer_clone = buffer.clone();
+        println!("add_receiver 5....");
 
         tokio::spawn(async move {
             let mut b = vec![0u8; 1500];
+            println!("read begin....");
             while let Ok((n, _)) = track_clone.read(&mut b).await {
-                println!("read size:{}", n);
+                //println!("read size:{}", n);
+                buffer_clone.write(&b[..n]).await;
+
                 // Unmarshal the packet and update the PayloadType
                 //   let mut buf = &b[..n];
                 // let mut rtp_packet = webrtc::rtp::packet::Packet::unmarshal(&mut buf)?;
@@ -509,7 +509,9 @@ impl Router for RouterLocal {
         }
 
         let codec = recv.codec();
-        s.me.lock().await.register_codec(codec.clone(), recv.kind())?;
+        s.me.lock()
+            .await
+            .register_codec(codec.clone(), recv.kind())?;
 
         let codec_capability = RTCRtpCodecCapability {
             mime_type: codec.capability.mime_type,

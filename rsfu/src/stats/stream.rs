@@ -6,7 +6,7 @@ use tokio::sync::Mutex;
 
 use prometheus::{Counter, CounterVec, Encoder, Gauge, GaugeVec, Opts, Registry, TextEncoder};
 
-use crate::buffer::buffer::{Buffer, Stats};
+use crate::buffer::buffer::{AtomicBuffer, Stats};
 
 struct PrometheusHandler {
     drift: Histogram,
@@ -93,7 +93,7 @@ pub struct StreamStats {
 }
 
 pub struct Stream {
-    buffer: Arc<Mutex<Buffer>>,
+    buffer: Arc<AtomicBuffer>,
 
     cname: Arc<Mutex<String>>,
     drift_in_millis: AtomicU64,
@@ -103,7 +103,7 @@ pub struct Stream {
 }
 
 impl Stream {
-    pub fn new(buffer: Arc<Mutex<Buffer>>) -> Self {
+    pub fn new(buffer: Arc<AtomicBuffer>) -> Self {
         let prometheus_handler = PrometheusHandler::new();
 
         Self {
@@ -160,7 +160,7 @@ impl Stream {
     }
 
     async fn calc_stats(&mut self) {
-        let buffer_stats = self.buffer.lock().await.get_status();
+        let buffer_stats = self.buffer.get_status().await;
         let drift_in_millis = self.get_drift_in_millis();
 
         let (has_stats, diff_stats) = self.update_stats(buffer_stats).await;

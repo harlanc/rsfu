@@ -755,7 +755,7 @@ impl DownTrack {
                                 self.switch_temporal_layer(
                                     mtl[current_spatial_layer as usize - 1],
                                     false,
-                                );
+                                ).await;
                             }
                             Ok(_) => {}
                         }

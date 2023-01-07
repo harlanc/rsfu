@@ -10,7 +10,7 @@ mod tests {
         let ssrc: u32 = 123456;
         let buffer = factory.get_or_new_buffer(ssrc).await;
 
-        let mut b = buffer.lock().await;
+  
 
         const test_buf: [u8; 68] = [
             0x47, 0x65, 0x6e, 0x75, 0x69, 0x6e, 0x65, 0x20, 0x41, 0x64, 0x6f, 0x62, 0x65, 0x20,
@@ -23,7 +23,7 @@ mod tests {
         ];
         let time: i64 = 1000;
 
-        b.calc(&test_buf, time);
+        buffer.calc(&test_buf, time);
 
         // let b - buffer.
     }

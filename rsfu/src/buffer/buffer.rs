@@ -149,43 +149,56 @@ impl Buffer {
             ..Default::default()
         }
     }
+}
 
-    pub async fn bind(&mut self, params: RTCRtpParameters, o: Options) {
+pub struct AtomicBuffer {
+    buffer: Arc<Mutex<Buffer>>,
+}
+
+impl AtomicBuffer {
+    pub fn new(ssrc: u32) -> Self {
+        Self {
+            buffer: Arc::new(Mutex::new(Buffer::new(ssrc))),
+        }
+    }
+
+    pub async fn bind(&self, params: RTCRtpParameters, o: Options) {
+        let mut buffer = self.buffer.lock().await;
         let codec = &params.codecs[0];
-        self.clock_rate = codec.capability.clock_rate;
-        self.max_bitrate = o.max_bitrate;
-        self.mime = codec.capability.mime_type.to_lowercase();
+        buffer.clock_rate = codec.capability.clock_rate;
+        buffer.max_bitrate = o.max_bitrate;
+        buffer.mime = codec.capability.mime_type.to_lowercase();
 
-        if self.mime.starts_with("audio/") {
-            self.codec_type = RTPCodecType::Audio;
-            self.bucket = Some(Bucket::new(self.audio_pool_len));
-        } else if self.mime.starts_with("video/") {
-            self.codec_type = RTPCodecType::Video;
-            self.bucket = Some(Bucket::new(self.video_pool_len));
+        if buffer.mime.starts_with("audio/") {
+            buffer.codec_type = RTPCodecType::Audio;
+            buffer.bucket = Some(Bucket::new(buffer.audio_pool_len));
+        } else if buffer.mime.starts_with("video/") {
+            buffer.codec_type = RTPCodecType::Video;
+            buffer.bucket = Some(Bucket::new(buffer.video_pool_len));
         } else {
-            self.codec_type = RTPCodecType::Unspecified;
+            buffer.codec_type = RTPCodecType::Unspecified;
         }
 
         for ext in &params.header_extensions {
             if ext.uri == extmap::TRANSPORT_CC_URI {
-                self.twcc_ext = ext.id as u8;
+                buffer.twcc_ext = ext.id as u8;
                 break;
             }
         }
 
-        match self.codec_type {
+        match buffer.codec_type {
             RTPCodecType::Video => {
                 for feedback in &codec.capability.rtcp_feedback {
                     match feedback.typ.clone().as_str() {
                         webrtc_rtp::TYPE_RTCP_FB_GOOG_REMB => {
-                            self.remb = true;
+                            buffer.remb = true;
                         }
                         webrtc_rtp::TYPE_RTCP_FB_TRANSPORT_CC => {
-                            self.twcc = true;
+                            buffer.twcc = true;
                         }
                         webrtc_rtp::TYPE_RTCP_FB_NACK => {
-                            self.nack = true;
-                            self.nacker = Some(NackQueue::new());
+                            buffer.nack = true;
+                            buffer.nacker = Some(NackQueue::new());
                         }
                         _ => {}
                     }
@@ -194,8 +207,8 @@ impl Buffer {
             RTPCodecType::Audio => {
                 for ext in &params.header_extensions {
                     if ext.uri == extmap::AUDIO_LEVEL_URI {
-                        self.audio_level = true;
-                        self.audio_ext = ext.id as u8;
+                        buffer.audio_level = true;
+                        buffer.audio_ext = ext.id as u8;
                     }
                 }
             }
@@ -203,115 +216,127 @@ impl Buffer {
             _ => {}
         }
 
-        for pp in self.pending_packets.clone() {
+        for pp in buffer.pending_packets.clone() {
             self.calc(&pp.packet[..], pp.arrival_time as i64).await;
         }
-        self.pending_packets.clear();
-        self.bound = true;
+        buffer.pending_packets.clear();
+        buffer.bound = true;
     }
 
-    pub async fn read_extended(&mut self) -> Result<ExtPacket> {
+    pub async fn read_extended(&self) -> Result<ExtPacket> {
         loop {
-            if self.closed {
+            println!("read_extended 0");
+            if self.buffer.lock().await.closed {
                 return Err(Error::ErrIOEof.into());
             }
-
-            if self.ext_packets.len() > 0 {
-                let ext_pkt = self.ext_packets.pop_front().unwrap();
+            println!("read_extended 1");
+            let ext_packets = &mut self.buffer.lock().await.ext_packets;
+            if ext_packets.len() > 0 {
+                let ext_pkt = ext_packets.pop_front().unwrap();
                 return Ok(ext_pkt);
             }
-
+            println!("read_extended 2");
             sleep(Duration::from_millis(10)).await;
         }
     }
 
     pub async fn on_close(&self, f: OnCloseFn) {
-        let mut handler = self.on_close_handler.lock().await;
+        let buffer = self.buffer.lock().await;
+        let mut handler = buffer.on_close_handler.lock().await;
         *handler = Some(f);
     }
 
-    pub async fn calc(&mut self, pkt: &[u8], arrival_time: i64) {
+    pub async fn calc(&self, pkt: &[u8], arrival_time: i64) {
+        // println!("calc 1....");
+        let buffer = &mut self.buffer.lock().await;
+        // println!("calc 2....");
         let sn = BigEndian::read_u16(&pkt[2..4]);
 
-        if self.stats.packet_count == 0 {
-            self.base_sn = sn;
-            self.max_seq_no = sn;
-            self.last_report = arrival_time;
-        } else if (sn - self.max_seq_no) & 0x8000 == 0 {
-            if sn < self.max_seq_no {
-                self.cycles += MAX_SEQUENCE_NUMBER;
+        if buffer.stats.packet_count == 0 {
+            buffer.base_sn = sn;
+            buffer.max_seq_no = sn;
+            buffer.last_report = arrival_time;
+        } else if (sn - buffer.max_seq_no) & 0x8000 == 0 {
+            if sn < buffer.max_seq_no {
+                buffer.cycles += MAX_SEQUENCE_NUMBER;
             }
-            if self.nack {
-                let diff = sn - self.max_seq_no;
+            if buffer.nack {
+                let diff = sn - buffer.max_seq_no;
 
                 for i in 1..diff {
                     let ext_sn: u32;
 
                     let msn = sn - i;
-                    if msn > self.max_seq_no && (msn & 0x8000) > 0 && self.max_seq_no & 0x8000 == 0
+                    if msn > buffer.max_seq_no
+                        && (msn & 0x8000) > 0
+                        && buffer.max_seq_no & 0x8000 == 0
                     {
-                        ext_sn = (self.cycles - MAX_SEQUENCE_NUMBER) | msn as u32;
+                        ext_sn = (buffer.cycles - MAX_SEQUENCE_NUMBER) | msn as u32;
                     } else {
-                        ext_sn = self.cycles | msn as u32;
+                        ext_sn = buffer.cycles | msn as u32;
                     }
 
-                    if let Some(nacker) = self.nacker.as_mut() {
+                    if let Some(nacker) = buffer.nacker.as_mut() {
                         nacker.push(ext_sn);
                     }
                 }
             }
-            self.max_seq_no = sn;
-        } else if self.nack && ((sn - self.max_seq_no) & 0x8000 > 0) {
+            buffer.max_seq_no = sn;
+        } else if buffer.nack && ((sn - buffer.max_seq_no) & 0x8000 > 0) {
             let ext_sn: u32;
 
-            if sn > self.max_seq_no && (sn & 0x8000) > 0 && self.max_seq_no & 0x8000 == 0 {
-                ext_sn = (self.cycles - MAX_SEQUENCE_NUMBER) | sn as u32;
+            if sn > buffer.max_seq_no && (sn & 0x8000) > 0 && buffer.max_seq_no & 0x8000 == 0 {
+                ext_sn = (buffer.cycles - MAX_SEQUENCE_NUMBER) | sn as u32;
             } else {
-                ext_sn = self.cycles | sn as u32;
+                ext_sn = buffer.cycles | sn as u32;
             }
-            if let Some(nacker) = self.nacker.as_mut() {
+            if let Some(nacker) = buffer.nacker.as_mut() {
                 nacker.remove(ext_sn);
             }
         }
 
         let mut packet: Packet = Packet::default();
 
-        if let Some(bucket) = &mut self.bucket {
-            let rv = bucket.add_packet(pkt, sn, sn == self.max_seq_no);
+        let max_seq_no = buffer.max_seq_no;
+        if let Some(bucket) = &mut buffer.bucket {
+            let rv = bucket.add_packet(pkt, sn, sn == max_seq_no);
 
             match rv {
                 Ok(data) => match Packet::unmarshal(&mut &data[..]) {
                     Err(_) => {
+                        println!("calc error 0....");
                         return;
                     }
                     Ok(p) => {
                         packet = p;
                     }
                 },
-                Err(_) => {
+                Err(err) => {
                     //  if Error::ErrRTXPacket.equal(&rv) {
+                    log::error!("add packet err: {}", err);
                     return;
                 }
             }
         }
 
-        self.stats.total_byte += pkt.len() as u64;
-        self.bitrate_helper += pkt.len() as u64;
-        self.stats.packet_count += 1;
+        buffer.stats.total_byte += pkt.len() as u64;
+        buffer.bitrate_helper += pkt.len() as u64;
+        buffer.stats.packet_count += 1;
 
         let mut ep = ExtPacket {
-            head: sn == self.max_seq_no,
-            cycle: self.cycles,
+            head: sn == buffer.max_seq_no,
+            cycle: buffer.cycles,
             packet: packet.clone(),
             arrival: arrival_time,
             key_frame: false,
             ..Default::default()
         };
 
-        match self.mime.as_str() {
+        match buffer.mime.as_str() {
             "video/vp8" => {
                 let mut vp8_packet = helpers::VP8::default();
                 if let Err(_) = vp8_packet.unmarshal(&packet.payload[..]) {
+                    println!("calc error 3....");
                     return;
                 }
                 ep.key_frame = vp8_packet.is_key_frame;
@@ -323,50 +348,50 @@ impl Buffer {
             _ => {}
         }
 
-        if self.min_packet_probe < 25 {
-            if sn < self.base_sn {
-                self.base_sn = sn
+        if buffer.min_packet_probe < 25 {
+            if sn < buffer.base_sn {
+                buffer.base_sn = sn
             }
 
-            if self.mime == "video/vp8" {
+            if buffer.mime == "video/vp8" {
                 let pld = ep.payload;
-                let mtl = self.max_temporal_layer;
+                let mtl = buffer.max_temporal_layer;
                 if mtl < pld.tid as i32 {
-                    self.max_temporal_layer = pld.tid as i32;
+                    buffer.max_temporal_layer = pld.tid as i32;
                 }
             }
 
-            self.min_packet_probe += 1;
+            buffer.min_packet_probe += 1;
         }
-
-        self.ext_packets.push_back(ep);
+        println!("calc 1....");
+        buffer.ext_packets.push_back(ep);
 
         // if first time update or the timestamp is later (factoring timestamp wrap around)
-        let latest_timestamp = self.latest_timestamp;
-        let latest_timestamp_in_nanos_since_epoch = self.latest_timestamp_time;
+        let latest_timestamp = buffer.latest_timestamp;
+        let latest_timestamp_in_nanos_since_epoch = buffer.latest_timestamp_time;
         if (latest_timestamp_in_nanos_since_epoch == 0)
             || is_later_timestamp(packet.header.timestamp, latest_timestamp)
         {
-            self.latest_timestamp = packet.header.timestamp;
-            self.latest_timestamp_time = arrival_time;
+            buffer.latest_timestamp = packet.header.timestamp;
+            buffer.latest_timestamp_time = arrival_time;
         }
 
-        let arrival = arrival_time as f64 / 1e6 * (self.clock_rate as f64 / 1e3);
+        let arrival = arrival_time as f64 / 1e6 * (buffer.clock_rate as f64 / 1e3);
         let transit = arrival - packet.header.timestamp as f64;
-        if self.last_transit != 0 {
-            let mut d = transit - self.last_transit as f64;
+        if buffer.last_transit != 0 {
+            let mut d = transit - buffer.last_transit as f64;
             if d < 0.0 {
                 d *= -1.0;
             }
 
-            self.stats.jitter += (d - self.stats.jitter) / 16 as f64;
+            buffer.stats.jitter += (d - buffer.stats.jitter) / 16 as f64;
         }
-        self.last_transit = transit as u32;
+        buffer.last_transit = transit as u32;
 
-        if self.twcc {
-            if let Some(mut ext) = packet.header.get_extension(self.twcc_ext) {
+        if buffer.twcc {
+            if let Some(mut ext) = packet.header.get_extension(buffer.twcc_ext) {
                 if ext.len() > 1 {
-                    let mut handler = self.on_transport_wide_cc_handler.lock().await;
+                    let mut handler = buffer.on_transport_wide_cc_handler.lock().await;
                     if let Some(f) = &mut *handler {
                         f(ext.get_u16(), arrival_time, packet.header.marker).await;
                     }
@@ -374,12 +399,12 @@ impl Buffer {
             }
         }
 
-        if self.audio_level {
-            if let Some(ext) = packet.header.get_extension(self.audio_ext) {
+        if buffer.audio_level {
+            if let Some(ext) = packet.header.get_extension(buffer.audio_ext) {
                 let rv = AudioLevelExtension::unmarshal(&mut &ext[..]);
 
                 if let Ok(data) = rv {
-                    let mut handler = self.on_audio_level_handler.lock().await;
+                    let mut handler = buffer.on_audio_level_handler.lock().await;
                     if let Some(f) = &mut *handler {
                         f(data.level).await;
                     }
@@ -387,35 +412,33 @@ impl Buffer {
             }
         }
 
-        let diff = arrival_time - self.last_report;
+        let diff = arrival_time - buffer.last_report;
 
-        if self.nacker.is_some() {
-            let rv = self.build_nack_packet();
-            let mut handler = self.on_feedback_callback_handler.lock().await;
+        if buffer.nacker.is_some() {
+            let rv = self.build_nack_packet().await;
+            let mut handler = buffer.on_feedback_callback_handler.lock().await;
             if let Some(f) = &mut *handler {
                 f(rv).await;
             }
         }
 
         if diff as f64 >= REPORT_DELTA {
-            let br = 8 * self.bitrate_helper * REPORT_DELTA as u64 / diff as u64;
-            self.bitrate = br;
-            self.last_report = arrival_time;
-            self.bitrate_helper = 0;
+            let br = 8 * buffer.bitrate_helper * REPORT_DELTA as u64 / diff as u64;
+            buffer.bitrate = br;
+            buffer.last_report = arrival_time;
+            buffer.bitrate_helper = 0;
         }
     }
 
-    fn build_nack_packet(&mut self) -> Vec<Box<dyn RtcpPacket + Send + Sync>> {
+    async fn build_nack_packet(&self) -> Vec<Box<dyn RtcpPacket + Send + Sync>> {
+        let buffer = &mut self.buffer.lock().await;
         let mut pkts: Vec<Box<dyn RtcpPacket + Send + Sync>> = Vec::new();
 
-        if self.nacker == None {
+        if buffer.nacker == None {
             return pkts;
         }
-        let (nacks, ask_key_frame) = self
-            .nacker
-            .as_mut()
-            .unwrap()
-            .pairs(self.cycles | self.max_seq_no as u32);
+        let seq_number = buffer.cycles | buffer.max_seq_no as u32;
+        let (nacks, ask_key_frame) = buffer.nacker.as_mut().unwrap().pairs(seq_number);
 
         let mut nacks_len: usize = 0;
         if nacks.is_some() {
@@ -425,7 +448,7 @@ impl Buffer {
         if nacks_len > 0 || ask_key_frame {
             if nacks_len > 0 {
                 let pkt = TransportLayerNack {
-                    media_ssrc: self.media_ssrc,
+                    media_ssrc: buffer.media_ssrc,
                     nacks: nacks.unwrap(),
                     ..Default::default()
                 };
@@ -434,7 +457,7 @@ impl Buffer {
 
             if ask_key_frame {
                 let pkt = PictureLossIndication {
-                    media_ssrc: self.media_ssrc,
+                    media_ssrc: buffer.media_ssrc,
                     ..Default::default()
                 };
                 pkts.push(Box::new(pkt));
@@ -444,52 +467,55 @@ impl Buffer {
         pkts
     }
 
-    fn build_remb_packet(&mut self) -> ReceiverEstimatedMaximumBitrate {
-        let mut br = self.bitrate;
+    async fn build_remb_packet(&self) -> ReceiverEstimatedMaximumBitrate {
+        let mut buffer = self.buffer.lock().await;
+        let mut br = buffer.bitrate;
 
-        if self.stats.lost_rate < 0.02 {
+        if buffer.stats.lost_rate < 0.02 {
             br = (br as f64 * 1.09) as u64 + 2000;
         }
 
-        if self.stats.lost_rate > 0.1 {
-            br = (br as f64 * (1.0 - 0.5 * self.stats.lost_rate) as f64) as u64;
+        if buffer.stats.lost_rate > 0.1 {
+            br = (br as f64 * (1.0 - 0.5 * buffer.stats.lost_rate) as f64) as u64;
         }
 
-        if br > self.max_bitrate {
-            br = self.max_bitrate;
+        if br > buffer.max_bitrate {
+            br = buffer.max_bitrate;
         }
 
         if br < 100000 {
             br = 100000;
         }
 
-        self.stats.total_byte = 0;
+        buffer.stats.total_byte = 0;
 
         return ReceiverEstimatedMaximumBitrate {
             bitrate: br as f32,
-            ssrcs: vec![self.media_ssrc],
+            ssrcs: vec![buffer.media_ssrc],
             ..Default::default()
         };
     }
 
-    fn build_reception_report(&mut self) -> ReceptionReport {
-        let ext_max_seq = self.cycles | self.max_seq_no as u32;
-        let expected = ext_max_seq - self.base_sn as u32 + 1;
+    async fn build_reception_report(&self) -> ReceptionReport {
+        let mut buffer = self.buffer.lock().await;
+
+        let ext_max_seq = buffer.cycles | buffer.max_seq_no as u32;
+        let expected = ext_max_seq - buffer.base_sn as u32 + 1;
         let mut lost: u32 = 0;
 
-        if self.stats.packet_count < expected && self.stats.packet_count != 0 {
-            lost = expected - self.stats.packet_count;
+        if buffer.stats.packet_count < expected && buffer.stats.packet_count != 0 {
+            lost = expected - buffer.stats.packet_count;
         }
 
-        let expected_interval = expected - self.stats.last_expected;
-        self.stats.last_expected = expected;
+        let expected_interval = expected - buffer.stats.last_expected;
+        buffer.stats.last_expected = expected;
 
-        let received_interval = self.stats.packet_count - self.stats.last_received;
-        self.stats.last_received = self.stats.packet_count;
+        let received_interval = buffer.stats.packet_count - buffer.stats.last_received;
+        buffer.stats.last_received = buffer.stats.packet_count;
 
         let lost_interval = expected_interval - received_interval;
 
-        self.stats.lost_rate = lost_interval as f32 / expected_interval as f32;
+        buffer.stats.lost_rate = lost_interval as f32 / expected_interval as f32;
 
         let mut frac_lost: u8 = 0;
         if expected_interval != 0 && lost_interval > 0 {
@@ -498,8 +524,8 @@ impl Buffer {
 
         let mut dlsr: u32 = 0;
 
-        if self.last_sr_recv != 0 {
-            let delay_ms = ((Instant::now().elapsed().subsec_nanos() - self.last_sr_recv as u32)
+        if buffer.last_sr_recv != 0 {
+            let delay_ms = ((Instant::now().elapsed().subsec_nanos() - buffer.last_sr_recv as u32)
                 as f64
                 / 1e6) as u32;
 
@@ -509,124 +535,142 @@ impl Buffer {
         }
 
         ReceptionReport {
-            ssrc: self.media_ssrc,
+            ssrc: buffer.media_ssrc,
             fraction_lost: frac_lost,
             total_lost: lost,
             last_sequence_number: ext_max_seq,
-            jitter: self.stats.jitter as u32,
-            last_sender_report: self.last_srrtp_time >> 16,
+            jitter: buffer.stats.jitter as u32,
+            last_sender_report: buffer.last_srrtp_time >> 16,
             delay: dlsr,
         }
     }
 
-    pub fn set_sender_report_data(&mut self, rtp_time: u32, ntp_time: u64) {
-        self.last_srrtp_time = rtp_time;
-        self.last_srntp_time = ntp_time;
-        self.last_sr_recv = Instant::now().elapsed().subsec_nanos() as i64;
+    pub async fn set_sender_report_data(&self, rtp_time: u32, ntp_time: u64) {
+        let mut buffer = self.buffer.lock().await;
+
+        buffer.last_srrtp_time = rtp_time;
+        buffer.last_srntp_time = ntp_time;
+        buffer.last_sr_recv = Instant::now().elapsed().subsec_nanos() as i64;
     }
 
-    fn get_rtcp(&mut self) -> Vec<Box<dyn RtcpPacket>> {
-        let mut rtcp_packets: Vec<Box<dyn RtcpPacket>> = Vec::new();
-        rtcp_packets.push(Box::new(self.build_reception_report()));
+    async fn get_rtcp(&mut self) -> Vec<Box<dyn RtcpPacket>> {
+        let mut buffer = self.buffer.lock().await;
 
-        if self.remb && !self.twcc {
-            rtcp_packets.push(Box::new(self.build_remb_packet()));
+        let mut rtcp_packets: Vec<Box<dyn RtcpPacket>> = Vec::new();
+        rtcp_packets.push(Box::new(self.build_reception_report().await));
+
+        if buffer.remb && !buffer.twcc {
+            rtcp_packets.push(Box::new(self.build_remb_packet().await));
         }
 
         rtcp_packets
     }
 
-    pub fn get_packet(&self, buff: &mut [u8], sn: u16) -> Result<usize> {
-        if self.closed {
+    pub async fn get_packet(&self, buff: &mut [u8], sn: u16) -> Result<usize> {
+        let buffer = self.buffer.lock().await;
+
+        if buffer.closed {
             return Err(Error::ErrIOEof.into());
         }
 
-        if let Some(bucket) = &self.bucket {
+        if let Some(bucket) = &buffer.bucket {
             return bucket.get_packet(buff, sn);
         }
 
         Ok(0)
     }
 
-    fn bitrate(&self) -> u64 {
-        self.bitrate
+    pub async fn bitrate(&self) -> u64 {
+        self.buffer.lock().await.bitrate
     }
 
-    fn max_temporal_layer(&self) -> i32 {
-        self.max_temporal_layer
+    pub async fn max_temporal_layer(&self) -> i32 {
+        self.buffer.lock().await.max_temporal_layer
     }
 
     pub async fn on_transport_wide_cc(&self, f: OnTransportWideCCFn) {
-        let mut handler = self.on_transport_wide_cc_handler.lock().await;
+        let buffer = self.buffer.lock().await;
+        let mut handler = buffer.on_transport_wide_cc_handler.lock().await;
         *handler = Some(f);
     }
 
     pub async fn on_feedback_callback(&self, f: OnFeedbackCallBackFn) {
-        let mut handler = self.on_feedback_callback_handler.lock().await;
+        let buffer = self.buffer.lock().await;
+        let mut handler = buffer.on_feedback_callback_handler.lock().await;
         *handler = Some(f);
     }
 
     pub async fn on_audio_level(&self, f: OnAudioLevelFn) {
-        let mut handler = self.on_audio_level_handler.lock().await;
+        let buffer = self.buffer.lock().await;
+        let mut handler = buffer.on_audio_level_handler.lock().await;
         *handler = Some(f);
     }
 
-    fn get_media_ssrc(&self) -> u32 {
-        self.media_ssrc
+    async fn get_media_ssrc(&self) -> u32 {
+        self.buffer.lock().await.media_ssrc
     }
 
-    fn get_clock_rate(&self) -> u32 {
-        self.clock_rate
+    async fn get_clock_rate(&self) -> u32 {
+        self.buffer.lock().await.clock_rate
     }
 
-    pub fn get_sender_report_data(&self) -> (u32, u64, i64) {
+    pub async fn get_sender_report_data(&self) -> (u32, u64, i64) {
+        let buffer = self.buffer.lock().await;
         (
-            self.last_srrtp_time,
-            self.last_srntp_time,
-            self.last_sr_recv,
+            buffer.last_srrtp_time,
+            buffer.last_srntp_time,
+            buffer.last_sr_recv,
         )
     }
 
-    pub fn get_status(&self) -> Stats {
-        self.stats.clone()
+    pub async fn get_status(&self) -> Stats {
+        self.buffer.lock().await.stats.clone()
     }
 
-    fn get_latest_timestamp(&self) -> (u32, i64) {
-        (self.latest_timestamp, self.latest_timestamp_time)
+    async fn get_latest_timestamp(&self) -> (u32, i64) {
+        let buffer = self.buffer.lock().await;
+        (buffer.latest_timestamp, buffer.latest_timestamp_time)
     }
 }
 
 #[async_trait]
-impl BufferIO for Buffer {
+impl BufferIO for AtomicBuffer {
     // Write adds a RTP Packet, out of order, new packet may be arrived later
-    async fn write(&mut self, pkt: &[u8]) -> Result<u32> {
-        if !self.bound {
-            self.pending_packets.push(PendingPackets {
-                arrival_time: Instant::now().elapsed().subsec_nanos() as u64,
-                packet: Vec::from(pkt),
-            });
+    async fn write(&self, pkt: &[u8]) -> Result<u32> {
+        //println!("buffer write begin....");
+        {
+            let mut buffer = self.buffer.lock().await;
+            //println!("buffer write begin 1....");
+            if !buffer.bound {
+                buffer.pending_packets.push(PendingPackets {
+                    arrival_time: Instant::now().elapsed().subsec_nanos() as u64,
+                    packet: Vec::from(pkt),
+                });
 
-            return Ok(0);
+                return Ok(0);
+            }
         }
 
+        //println!("buffer write begin 2....");
         self.calc(pkt, Instant::now().elapsed().subsec_nanos() as i64)
             .await;
 
         Ok(0)
     }
 
-    fn read(&mut self, buff: &mut [u8]) -> Result<usize> {
-        if self.closed {
+    async fn read(&mut self, buff: &mut [u8]) -> Result<usize> {
+        let buffer = self.buffer.lock().await;
+        if buffer.closed {
             return Err(Error::ErrIOEof.into());
         }
 
         let mut n: usize = 0;
 
-        if self.pending_packets.len() > self.last_packet_read as usize {
+        if buffer.pending_packets.len() > buffer.last_packet_read as usize {
             if buff.len()
-                < self
+                < buffer
                     .pending_packets
-                    .get(self.last_packet_read as usize)
+                    .get(buffer.last_packet_read as usize)
                     .unwrap()
                     .packet
                     .len()
@@ -634,9 +678,9 @@ impl BufferIO for Buffer {
                 return Err(Error::ErrBufferTooSmall.into());
             }
 
-            let packet = &self
+            let packet = &buffer
                 .pending_packets
-                .get(self.last_packet_read as usize)
+                .get(buffer.last_packet_read as usize)
                 .unwrap()
                 .packet;
 
@@ -648,8 +692,9 @@ impl BufferIO for Buffer {
 
         Ok(n)
     }
-    fn close(&mut self) -> Result<()> {
-        if self.bucket.is_some() && self.codec_type == RTPCodecType::Video {}
+    async fn close(&self) -> Result<()> {
+        let buffer = self.buffer.lock().await;
+        if buffer.bucket.is_some() && buffer.codec_type == RTPCodecType::Video {}
 
         Ok(())
     }
