@@ -35,6 +35,7 @@ use byteorder::{BigEndian, ByteOrder, WriteBytesExt};
 use bytes::{BufMut, BytesMut};
 
 use super::buffer_io::BufferIO;
+use crate::buffer::bucket;
 use crate::{buffer::bucket::Bucket, buffer::nack::NackQueue};
 
 const MAX_SEQUENCE_NUMBER: u32 = 1 << 16;
@@ -146,6 +147,8 @@ impl Buffer {
     pub fn new(ssrc: u32) -> Self {
         Self {
             media_ssrc: ssrc,
+            video_pool_len: 1500 * 500,
+            audio_pool_len: 1500 * 25,
             ..Default::default()
         }
     }
@@ -225,17 +228,15 @@ impl AtomicBuffer {
 
     pub async fn read_extended(&self) -> Result<ExtPacket> {
         loop {
-            println!("read_extended 0");
             if self.buffer.lock().await.closed {
                 return Err(Error::ErrIOEof.into());
             }
-            println!("read_extended 1");
+
             let ext_packets = &mut self.buffer.lock().await.ext_packets;
             if ext_packets.len() > 0 {
                 let ext_pkt = ext_packets.pop_front().unwrap();
                 return Ok(ext_pkt);
             }
-            println!("read_extended 2");
             sleep(Duration::from_millis(10)).await;
         }
     }
@@ -252,11 +253,13 @@ impl AtomicBuffer {
         // println!("calc 2....");
         let sn = BigEndian::read_u16(&pkt[2..4]);
 
+        let distance = bucket::distance(sn, buffer.max_seq_no);
+
         if buffer.stats.packet_count == 0 {
             buffer.base_sn = sn;
             buffer.max_seq_no = sn;
             buffer.last_report = arrival_time;
-        } else if (sn - buffer.max_seq_no) & 0x8000 == 0 {
+        } else if distance & 0x8000 == 0 {
             if sn < buffer.max_seq_no {
                 buffer.cycles += MAX_SEQUENCE_NUMBER;
             }
@@ -282,7 +285,7 @@ impl AtomicBuffer {
                 }
             }
             buffer.max_seq_no = sn;
-        } else if buffer.nack && ((sn - buffer.max_seq_no) & 0x8000 > 0) {
+        } else if buffer.nack && (distance & 0x8000 > 0) {
             let ext_sn: u32;
 
             if sn > buffer.max_seq_no && (sn & 0x8000) > 0 && buffer.max_seq_no & 0x8000 == 0 {
@@ -363,7 +366,7 @@ impl AtomicBuffer {
 
             buffer.min_packet_probe += 1;
         }
-        println!("calc 1....");
+
         buffer.ext_packets.push_back(ep);
 
         // if first time update or the timestamp is later (factoring timestamp wrap around)

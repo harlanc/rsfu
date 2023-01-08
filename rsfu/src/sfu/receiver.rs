@@ -253,11 +253,12 @@ impl Receiver for WebRTCReceiver {
         // tokio::spawn(async move { self.write_rtp(layer) });
     }
     async fn add_down_track(&self, track: Arc<DownTrack>, best_quality_first: bool) {
+        log::info!("receiver add_down_track..");
         if self.closed.load(Ordering::Relaxed) {
             return;
         }
         let mut layer = 0;
-
+        log::info!("receiver add_down_track1..");
         if self.is_simulcast {
             for (idx, v) in self.available.lock().await.iter().enumerate() {
                 if v.load(Ordering::Relaxed) {
@@ -279,13 +280,16 @@ impl Receiver for WebRTCReceiver {
                 .await;
             // track.payload =
         } else {
+            log::info!("receiver add_down_track2..");
             if self.down_track_subscribed(layer, track.clone()).await {
+                log::info!("receiver add_down_track2.1..");
                 return;
             }
+            log::info!("receiver add_down_track3..");
             track.set_initial_layers(0, 0);
             track.set_track_type(DownTrackType::SimpleDownTrack).await;
         }
-
+        log::info!("receiver add_down_track4..");
         self.store_down_track(layer, track).await
     }
     async fn switch_down_track(&self, track: Arc<DownTrack>, layer: usize) -> Result<()> {
@@ -452,11 +456,8 @@ impl Receiver for WebRTCReceiver {
     async fn write_rtp(&self, layer: usize) -> Result<()> {
         loop {
             if let Some(buffer) = &self.buffers.lock().await[layer] {
-                println!("write_rtp 0");
- 
                 match buffer.read_extended().await {
                     Ok(pkt) => {
-                        println!("write_rtp 1");
                         if self.is_simulcast && self.pending[layer].load(Ordering::Relaxed) {
                             if pkt.key_frame {
                                 //use tmp_val here just to skip the build error
@@ -487,16 +488,24 @@ impl Receiver for WebRTCReceiver {
                             }
                         }
 
+                        log::info!("down_track write0: ");
                         let mut delete_down_track_params = Vec::new();
                         {
                             let mut dts = self.down_tracks[layer].lock().await;
+                            log::info!("down_track write1:size:{} layer:{} ", dts.len(), layer);
                             for dt in &mut *dts {
                                 //let mut dt_value = dt.lock().await;
+                                log::info!("down_track write: {}", dt.id());
                                 if let Err(err) = dt.write_rtp(pkt.clone(), layer).await {
                                     match err {
                                         RTCError::ErrClosedPipe
                                         | RTCError::ErrDataChannelNotOpen
                                         | RTCError::ErrConnectionClosed => {
+                                            log::error!(
+                                                "down track write error:{} layer:{}",
+                                                err,
+                                                layer
+                                            );
                                             delete_down_track_params.push((layer, dt.id().clone()));
                                         }
                                         _ => {}
@@ -510,9 +519,12 @@ impl Receiver for WebRTCReceiver {
                         }
                     }
                     Err(e) => match e {
-                        
-                        SfuBufferError::ErrIOEof => {    println!("write_rtp 1");}
-                        _ => {    println!("write_rtp 2");}
+                        SfuBufferError::ErrIOEof => {
+                            println!("write_rtp 1");
+                        }
+                        _ => {
+                            println!("write_rtp 2");
+                        }
                     },
                 }
             }
@@ -545,10 +557,11 @@ impl WebRTCReceiver {
             }
         }
 
-        true
+        false
     }
 
     async fn store_down_track(&self, layer: usize, dt: Arc<DownTrack>) {
+        log::info!("store_down_track , layer: {}", layer);
         let dts = &mut self.down_tracks[layer].lock().await;
         dts.push(dt);
     }

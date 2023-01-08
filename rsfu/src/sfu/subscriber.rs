@@ -187,11 +187,17 @@ impl Subscriber {
     }
 
     pub async fn add_down_track(&self, stream_id: String, down_track: Arc<DownTrack>) {
-        if let Some(dt) = self.tracks.lock().await.get_mut(&stream_id) {
-            dt.push(down_track)
-        } else {
-            self.tracks.lock().await.insert(stream_id, Vec::new());
+        log::info!("subscriber add_down_track0");
+        let tracks = &mut *self.tracks.lock().await;
+        if let Some(dt) = tracks.get_mut(&stream_id) {
+            log::info!("subscriber add_down_track1");
+            dt.push(down_track);
+            return;
         }
+
+        log::info!("subscriber add_down_track2");
+        tracks.insert(stream_id, Vec::new());
+        log::info!("subscriber add_down_track3");
     }
 
     pub async fn remove_down_track(&self, stream_id: String, down_track: Arc<DownTrack>) {

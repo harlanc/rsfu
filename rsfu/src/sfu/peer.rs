@@ -217,11 +217,11 @@ impl PeerLocal {
         // let id = &mut *self.id.lock().await;
         // id = &mut uuid;
 
-        *self.id.lock().await = uuid;
+        *self.id.lock().await = uuid.clone();
 
         let provider = self.provider.lock().await;
 
-        let (cur_session, webrtc_transport_cfg) = provider.get_session(sid).await;
+        let (cur_session, webrtc_transport_cfg) = provider.get_session(sid.clone()).await;
 
         let rtc_config_clone = RTCConfiguration {
             ice_servers: webrtc_transport_cfg.configuration.ice_servers.clone(),
@@ -249,7 +249,7 @@ impl PeerLocal {
 
             let sub = Arc::clone(&subscriber);
             let on_offer_handler_out = self.on_offer_handler.clone();
-
+            let uuid_out = uuid.clone();
             println!("on_offer 0");
 
             subscriber
@@ -257,6 +257,7 @@ impl PeerLocal {
                     let remote_answer_pending_in = remote_answer_pending_out.clone();
                     let negotiation_pending_in = negotiation_pending_out.clone();
                     let closed_in = closed_out.clone();
+                    let uuid_clone = uuid_out.clone();
 
                     let sub_in = sub.clone();
                     let on_offer_handler_in = on_offer_handler_out.clone();
@@ -272,6 +273,7 @@ impl PeerLocal {
                         println!("on_offer 2");
                         if let Some(on_offer) = &mut *on_offer_handler_in.lock().await {
                             if !closed_in.load(Ordering::Relaxed) {
+                                log::info!("Send offer, peer_id: {}", uuid_clone);
                                 on_offer(offer).await;
                             }
                         }
@@ -372,6 +374,14 @@ impl PeerLocal {
 
         cur_session.clone().unwrap().add_peer(self.clone()).await;
 
+        //Logger.V(0).Info("PeerLocal join SessionLocal", "peer_id", p.id, "session_id", sid)
+
+        log::info!(
+            "PeerLocal join SessionLocal ,peer_id: {} session_id: {}",
+            uuid,
+            sid
+        );
+
         if !cfg.no_subscribe {
             cur_session.clone().unwrap().subscribe(self.clone()).await;
         }
@@ -381,11 +391,15 @@ impl PeerLocal {
 
     pub async fn answer(&self, sdp: RTCSessionDescription) -> Result<RTCSessionDescription> {
         if let Some(publisher) = &*self.publisher.lock().await {
+            //Logger.V(0).Info("PeerLocal got offer", "peer_id", p.id)
+            log::info!("PeerLocal got offer, peer_id :{}", self.id().await);
             if publisher.signaling_state() != RTCSignalingState::Stable {
                 return Err(Error::ErrOfferIgnored.into());
             }
 
-            publisher.answer(sdp).await
+            let rv = publisher.answer(sdp).await;
+            log::info!("PeerLocal send answer, peer_id :{}", self.id().await);
+            rv
         } else {
             return Err(Error::ErrNoTransportEstablished.into());
         }
@@ -393,7 +407,7 @@ impl PeerLocal {
 
     pub async fn set_remote_description(&self, sdp: RTCSessionDescription) -> Result<()> {
         if let Some(subscriber) = &*self.subscriber.lock().await {
-            log::info!("peer local got answer, peer id:{}", self.id.lock().await);
+            log::info!("PeerLocal got answer, peer id:{}", self.id.lock().await);
             subscriber.set_remote_description(sdp).await?;
             self.remote_answer_pending.store(false, Ordering::Relaxed);
 
@@ -408,14 +422,14 @@ impl PeerLocal {
         Ok(())
     }
 
-    pub async fn trickle(& self, candidate: RTCIceCandidateInit, target: u8) -> Result<()> {
+    pub async fn trickle(&self, candidate: RTCIceCandidateInit, target: u8) -> Result<()> {
         let subscriber = self.subscriber.lock().await;
         let publisher = self.publisher.lock().await;
         if subscriber.is_none() || publisher.is_none() {
             return Err(Error::ErrNoTransportEstablished.into());
         }
 
-        log::info!("peer local trickle, peer id:{}", self.id.lock().await);
+        log::info!("PeerLocal trickle, peer_id:{}", self.id.lock().await);
         match target {
             PUBLISHER => {
                 if let Some(publisher) = &*publisher {

@@ -502,17 +502,21 @@ impl Router for RouterLocal {
     ) -> Result<(Option<Arc<DownTrack>>)> {
         let mut recv = r.clone();
 
-        for dt in s.get_downtracks(recv.stream_id()).await.unwrap() {
-            if dt.id() == recv.track_id() {
-                return Ok(Some(dt));
+        let downtracks = s.get_downtracks(recv.stream_id()).await;
+        log::info!("add_down_track 0..");
+        if let Some(downtracks_data) = downtracks {
+            for dt in downtracks_data {
+                if dt.id() == recv.track_id() {
+                    return Ok(Some(dt));
+                }
             }
         }
-
+        log::info!("add_down_track 1..");
         let codec = recv.codec();
         s.me.lock()
             .await
             .register_codec(codec.clone(), recv.kind())?;
-
+        log::info!("add_down_track 2..");
         let codec_capability = RTCRtpCodecCapability {
             mime_type: codec.capability.mime_type,
             clock_rate: codec.capability.clock_rate,
@@ -548,7 +552,7 @@ impl Router for RouterLocal {
                 }],
             )
             .await?;
-
+        log::info!("add_down_track 3..");
         let mut down_track = DownTrack::new_track_local(s.id.clone(), down_track_arc);
         down_track.set_transceiver(transceiver.clone());
 
@@ -603,12 +607,13 @@ impl Router for RouterLocal {
                 })
             }))
             .await;
-
+        log::info!("add_down_track 4..");
         s.add_down_track(recv.stream_id(), down_track_arc.clone())
             .await;
+        log::info!("add_down_track 5..");
         recv.add_down_track(down_track_arc, self.config.simulcast.best_quality_first)
             .await;
-
+        log::info!("add_down_track 6..");
         Ok(None)
     }
 

@@ -197,8 +197,10 @@ impl Session for SessionLocal {
     }
 
     async fn add_peer(&self, peer: Arc<dyn Peer + Send + Sync>) {
+        log::info!("add_peer...");
         let id = peer.id().await;
         self.peers.lock().await.insert(id, peer);
+        log::info!("add_peer finsh...");
     }
 
     async fn get_peer(&self, peer_id: String) -> Option<Arc<dyn Peer + Send + Sync>> {
@@ -291,10 +293,12 @@ impl Session for SessionLocal {
         }
 
         self.fanout_data_channels.lock().await.push(label.clone());
+        log::info!("add_data_channel 0..");
+        //let peers = self.peers.lock().await;
 
-        let peers = self.peers.lock().await;
+        let peer_owner = self.get_peer(owner.clone()).await.unwrap();
 
-        let peer_owner = peers.get(&owner).unwrap();
+        //let peer_owner = peers.get(&owner).unwrap();
 
         if let Some(subscriber) = peer_owner.subscriber().await {
             subscriber.register_data_channel(label.clone(), dc.clone());
@@ -309,8 +313,9 @@ impl Session for SessionLocal {
             })
         }))
         .await;
-
+        log::info!("add_data_channel 1..");
         for peer in &self.peers().await {
+            log::info!("add_data_channel 2..");
             if peer.id().await == owner || peer.subscriber().await.is_none() {
                 continue;
             }
@@ -346,13 +351,15 @@ impl Session for SessionLocal {
         router: Arc<dyn Router + Send + Sync>,
         r: Arc<dyn Receiver + Send + Sync>,
     ) {
+        log::info!("publish.................");
         let mut router_val = router;
         for peer in self.peers().await {
+            log::info!("publish 0.......................");
             let subscriber = peer.subscriber().await;
             if router_val.id() == peer.id().await || subscriber.is_none() {
                 continue;
             }
-
+            log::info!("Publishing track to peer, peer_id: {}", self.id());
             if router_val
                 .add_down_tracks(peer.subscriber().await.unwrap(), Some(r.clone()))
                 .await
@@ -363,6 +370,7 @@ impl Session for SessionLocal {
         }
     }
     async fn subscribe(&self, peer: Arc<dyn Peer + Send + Sync>) {
+        log::info!("subscribe...");
         let fanout_data_channels = self.fanout_data_channels.lock().await;
         for label in &*fanout_data_channels {
             if let Some(subscriber) = peer.subscriber().await {
@@ -391,6 +399,11 @@ impl Session for SessionLocal {
         let peers = self.peers.lock().await;
 
         for (_, cur_peer) in &*peers {
+            //	Logger.V(0).Info("Subscribe to publisher streams...........", "peer_id", p.ID())
+            log::info!(
+                "Subscribe to publisher streams , peer_id:{}",
+                peer.id().await
+            );
             if cur_peer.id().await == peer.id().await || cur_peer.publisher().await.is_none() {
                 continue;
             }
@@ -444,8 +457,9 @@ impl Session for SessionLocal {
 
     async fn peers(&self) -> Vec<Arc<dyn Peer + Send + Sync>> {
         let mut peers: Vec<Arc<dyn Peer + Send + Sync>> = Vec::new();
-
+        log::info!("get peers...");
         let peers_val = self.peers.lock().await;
+        log::info!("get peers ... size:{}", peers_val.len());
         for (k, v) in &*peers_val {
             peers.push(v.clone());
         }
