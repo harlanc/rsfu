@@ -286,6 +286,7 @@ impl TrackLocal for DownTrackLocal {
     // async fn bind(&self, t: &TrackLocalContext) -> Result<RTCRtpCodecParameters>;
 
     async fn bind(&self, t: &TrackLocalContext) -> Result<RTCRtpCodecParameters> {
+        log::info!("down_track_local bind..");
         let parameters = RTCRtpCodecParameters {
             capability: self.codec.clone(),
             ..Default::default()
@@ -302,8 +303,9 @@ impl TrackLocal for DownTrackLocal {
         let mut mime = self.mime.lock().await;
         *mime = codec.capability.mime_type.to_lowercase();
         self.re_sync.store(true, Ordering::Relaxed);
+        log::info!("down_track_local bind 1..");
         self.enabled.store(true, Ordering::Relaxed);
-
+        log::info!("down_track_local bind 2..");
         let mut buffer_factory = self.buffer_factory.lock().await;
 
         let rtcp_buffer = buffer_factory.get_or_new_rtcp_buffer(t.ssrc()).await;

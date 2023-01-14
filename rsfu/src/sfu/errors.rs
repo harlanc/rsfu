@@ -3,6 +3,7 @@ use thiserror::Error;
 use rtcp::Error as RTCPError;
 use webrtc::Error as RTCError;
 pub type Result<T> = std::result::Result<T, Error>;
+use std::io::Error as IOError;
 
 #[derive(Error, Debug, PartialEq)]
 pub enum Error {
@@ -56,3 +57,19 @@ impl From<RTCPError> for Error {
 //         Error::ErrWebRTCError(error)
 //     }
 // }
+
+pub struct ConfigError {
+    pub value: ConfigErrorValue,
+}
+
+pub enum ConfigErrorValue {
+    IOError(IOError),
+}
+
+impl From<IOError> for ConfigError {
+    fn from(error: IOError) -> Self {
+        ConfigError {
+            value: ConfigErrorValue::IOError(error),
+        }
+    }
+}

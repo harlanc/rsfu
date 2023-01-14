@@ -20,6 +20,7 @@ use webrtc::ice_transport::ice_server::RTCIceServer;
 
 use super::peer::SessionProvider;
 use crate::buffer::factory::AtomicFactory;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use turn::auth::AuthHandler;
 use webrtc::peer_connection::configuration::*;
@@ -28,17 +29,21 @@ use webrtc_ice::mdns::MulticastDnsMode;
 use webrtc_ice::udp_mux::*;
 use webrtc_ice::udp_network::*;
 
+use super::errors::ConfigError;
 use async_trait::async_trait;
-#[derive(Clone)]
+use std::fs;
+#[derive(Clone, Deserialize)]
 struct ICEServerConfig {
     urls: Vec<String>,
     user_name: String,
     credential: String,
 }
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Deserialize)]
 struct Candidates {
-    ice_lite: bool,
-    nat1_to_1ips: Vec<String>,
+    #[serde(rename = "icelite")]
+    ice_lite: Option<bool>,
+    #[serde(rename = "nat1to1ips")]
+    nat1_to_1ips: Option<Vec<String>>,
 }
 #[derive(Default)]
 pub struct WebRTCTransportConfig {
@@ -47,34 +52,49 @@ pub struct WebRTCTransportConfig {
     pub Router: RouterConfig,
     pub factory: Arc<Mutex<AtomicFactory>>,
 }
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Deserialize)]
 struct WebRTCTimeoutsConfig {
+    #[serde(rename = "disconnected")]
     ice_disconnected_timeout: i32,
+    #[serde(rename = "failed")]
     ice_failed_timeout: i32,
+    #[serde(rename = "keepalive")]
     ice_keepalive_interval: i32,
 }
-#[derive(Clone, Default)]
-struct WebRTCConfig {
-    ice_single_port: i32,
-    ice_port_range: Vec<u16>,
-    ice_servers: Vec<ICEServerConfig>,
+#[derive(Clone, Default, Deserialize)]
+pub struct WebRTCConfig {
+    ice_single_port: Option<i32>,
+    #[serde(rename = "portrange")]
+    pub ice_port_range: Option<Vec<u16>>,
+    ice_servers: Option<Vec<ICEServerConfig>>,
     candidates: Candidates,
-    sdp_semantics: String,
+    #[serde(rename = "sdpsemantics")]
+    pub sdp_semantics: String,
+    #[serde(rename = "mdns")]
     mdns: bool,
     timeouts: WebRTCTimeoutsConfig,
 }
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Deserialize)]
 struct SFUConfig {
+    #[serde(rename = "ballast")]
     ballast: i64,
+    #[serde(rename = "withstats")]
     with_stats: bool,
 }
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Deserialize)]
 pub struct Config {
     sfu: SFUConfig,
-    webrtc: WebRTCConfig,
     router: RouterConfig,
+    pub webrtc: WebRTCConfig,
     turn: TurnConfig,
+    #[serde(skip_deserializing)]
     turn_auth: Option<Arc<dyn AuthHandler + Send + Sync>>,
+}
+
+pub fn load(cfg_path: &String) -> Result<Config, ConfigError> {
+    let content = fs::read_to_string(cfg_path)?;
+    let decoded_config = toml::from_str(&content[..]).unwrap();
+    Ok(decoded_config)
 }
 
 #[derive(Default)]
@@ -91,8 +111,8 @@ impl WebRTCTransportConfig {
         let mut se = SettingEngine::default();
         se.disable_media_engine_copy(true);
 
-        if c.webrtc.ice_single_port != 0 {
-            let rv = UdpSocket::bind(("0.0.0.0", c.webrtc.ice_single_port as u16)).await;
+        if let Some(ice_single_port) = c.webrtc.ice_single_port {
+            let rv = UdpSocket::bind(("0.0.0.0", ice_single_port as u16)).await;
             let udp_socket: UdpSocket;
             match rv {
                 Ok(sock) => {
@@ -108,12 +128,14 @@ impl WebRTCTransportConfig {
             let mut ice_port_start: u16 = 0;
             let mut ice_port_end: u16 = 0;
 
-            if c.turn.enabled && c.turn.port_range.len() == 0 {
+            if c.turn.enabled && c.turn.port_range.is_none() {
                 ice_port_start = super::turn::SFU_MIN_PORT;
                 ice_port_end = super::turn::SFU_MAX_PORT;
-            } else if c.webrtc.ice_port_range.len() == 2 {
-                ice_port_start = c.webrtc.ice_port_range[0];
-                ice_port_end = c.webrtc.ice_port_range[1];
+            } else if let Some(ice_port_range) = &c.webrtc.ice_port_range {
+                if ice_port_range.len() == 2 {
+                    ice_port_start = ice_port_range[0];
+                    ice_port_end = ice_port_range[1];
+                }
             }
 
             if ice_port_start != 0 || ice_port_end != 0 {
@@ -124,20 +146,25 @@ impl WebRTCTransportConfig {
         }
 
         let mut ice_servers: Vec<RTCIceServer> = Vec::new();
-        if c.webrtc.candidates.ice_lite {
-            se.set_lite(c.webrtc.candidates.ice_lite);
-        } else {
-            for ice_server in &c.webrtc.ice_servers {
-                let s = RTCIceServer {
-                    urls: ice_server.urls.clone(),
-                    username: ice_server.user_name.clone(),
-                    credential: ice_server.credential.clone(),
-                    credential_type: RTCIceCredentialType::Unspecified,
-                };
+        if let Some(ice_lite) = c.webrtc.candidates.ice_lite {
+            if ice_lite {
+                se.set_lite(ice_lite);
+            } else {
+                if let Some(ice_servers_cfg) = &c.webrtc.ice_servers {
+                    for ice_server in ice_servers_cfg {
+                        let s = RTCIceServer {
+                            urls: ice_server.urls.clone(),
+                            username: ice_server.user_name.clone(),
+                            credential: ice_server.credential.clone(),
+                            credential_type: RTCIceCredentialType::Unspecified,
+                        };
 
-                ice_servers.push(s);
+                        ice_servers.push(s);
+                    }
+                }
             }
         }
+
         let mut sdp_semantics = RTCSdpSemantics::UnifiedPlan;
 
         match c.webrtc.sdp_semantics.as_str() {
@@ -179,11 +206,11 @@ impl WebRTCTransportConfig {
             factory: Arc::new(Mutex::new(AtomicFactory::new(1000, 1000))),
         };
 
-        if c.webrtc.candidates.nat1_to_1ips.len() > 0 {
-            w.setting.set_nat_1to1_ips(
-                c.webrtc.candidates.nat1_to_1ips.clone(),
-                RTCIceCandidateType::Host,
-            );
+        if let Some(nat1toiips) = &c.webrtc.candidates.nat1_to_1ips {
+            if nat1toiips.len() > 0 {
+                w.setting
+                    .set_nat_1to1_ips(nat1toiips.clone(), RTCIceCandidateType::Host);
+            }
         }
 
         if c.webrtc.mdns {

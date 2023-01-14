@@ -273,7 +273,7 @@ impl PeerLocal {
                         println!("on_offer 2");
                         if let Some(on_offer) = &mut *on_offer_handler_in.lock().await {
                             if !closed_in.load(Ordering::Relaxed) {
-                                log::info!("Send offer, peer_id: {}", uuid_clone);
+                                log::info!("PeerLocal Send offer, peer_id: {}", uuid_clone);
                                 on_offer(offer).await;
                             }
                         }

@@ -33,6 +33,7 @@ use webrtc::rtp_transceiver::{RTCRtpTransceiverInit, SSRC};
 use webrtc::track::track_local::TrackLocal;
 use webrtc::track::track_remote::TrackRemote;
 
+use serde::Deserialize;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 pub type RtcpDataSender = mpsc::UnboundedSender<Vec<Box<dyn RtcpPacket + Send + Sync>>>;
@@ -90,13 +91,19 @@ pub trait Router {
     async fn send_rtcp(&self);
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Deserialize)]
 pub struct RouterConfig {
+    #[serde(rename = "withstats")]
     pub(super) with_stats: bool,
+    #[serde(rename = "maxbandwidth")]
     max_bandwidth: u64,
+    #[serde(rename = "maxpackettrack")]
     pub max_packet_track: i32,
+    #[serde(rename = "audiolevelinterval")]
     pub audio_level_interval: i32,
+    #[serde(rename = "audiolevelthreshold")]
     audio_level_threshold: u8,
+    #[serde(rename = "audiolevelfilter")]
     audio_level_filter: i32,
     simulcast: SimulcastConfig,
 }

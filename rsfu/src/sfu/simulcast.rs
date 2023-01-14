@@ -1,11 +1,14 @@
+use serde::Deserialize;
 use std::time::{Duration, SystemTime};
 
 pub const QUARTER_RESOLUTION: &'static str = "q";
 pub const HALF_RESOLUTION: &'static str = "h";
 pub const FULL_RESOLUTION: &'static str = "f";
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Deserialize)]
 pub struct SimulcastConfig {
+    #[serde(rename = "bestqualityfirst")]
     pub best_quality_first: bool,
+    #[serde(rename = "enabletemporallayer")]
     enable_temporal_layer: bool,
 }
 

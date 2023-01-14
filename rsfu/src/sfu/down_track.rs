@@ -252,15 +252,23 @@ impl DownTrack {
     }
 
     pub async fn write_rtp(&self, pkt: ExtPacket, layer: usize) -> Result<()> {
-        if !self.down_track_local.enabled.load(Ordering::Relaxed) || !self.bound() {
+        //log::info!("write_rtp...");
+        if !self.down_track_local.enabled.load(Ordering::Relaxed) {
+           // log::info!("write_rtp 0.1...");
             return Ok(());
         }
-
+        if !self.bound() {
+            log::info!("write_rtp 0.2...");
+            return Ok(());
+        }
+        log::info!("write_rtp 0...");
         match *self.track_type.lock().await {
             DownTrackType::SimpleDownTrack => {
+                log::info!("write_rtp 1...");
                 return self.write_simple_rtp(pkt).await;
             }
             DownTrackType::SimulcastDownTrack => {
+                log::info!("write_rtp 2...");
                 return self.write_simulcast_rtp(pkt, layer as i32).await;
             }
         }
@@ -755,7 +763,8 @@ impl DownTrack {
                                 self.switch_temporal_layer(
                                     mtl[current_spatial_layer as usize - 1],
                                     false,
-                                ).await;
+                                )
+                                .await;
                             }
                             Ok(_) => {}
                         }
@@ -902,6 +911,7 @@ impl TrackLocal for DownTrack {
     // async fn bind(&self, t: &TrackLocalContext) -> Result<RTCRtpCodecParameters>;
 
     async fn bind(&self, t: &TrackLocalContext) -> Result<RTCRtpCodecParameters> {
+        log::info!("TrackLocal bind.......");
         self.down_track_local.bind(t).await
     }
 

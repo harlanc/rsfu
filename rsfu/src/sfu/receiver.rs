@@ -488,14 +488,14 @@ impl Receiver for WebRTCReceiver {
                             }
                         }
 
-                        log::info!("down_track write0: ");
+                        //log::info!("down_track write0: ");
                         let mut delete_down_track_params = Vec::new();
                         {
                             let mut dts = self.down_tracks[layer].lock().await;
-                            log::info!("down_track write1:size:{} layer:{} ", dts.len(), layer);
+                            //log::info!("down_track write1:size:{} layer:{} ", dts.len(), layer);
                             for dt in &mut *dts {
                                 //let mut dt_value = dt.lock().await;
-                                log::info!("down_track write: {}", dt.id());
+                               // log::info!("down_track write: {}", dt.id());
                                 if let Err(err) = dt.write_rtp(pkt.clone(), layer).await {
                                     match err {
                                         RTCError::ErrClosedPipe

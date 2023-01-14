@@ -21,6 +21,8 @@ use std::result::Result;
 use std::str::FromStr;
 use webrtc_util::vnet::net::*;
 
+use serde::Deserialize;
+
 //use util::vnet::net::
 
 pub const TURN_MIN_PORT: u16 = 32768;
@@ -28,20 +30,24 @@ pub const TURN_MAX_PORT: u16 = 46883;
 
 pub const SFU_MIN_PORT: u16 = 46884;
 pub const SFU_MAX_PORT: u16 = 60999;
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Deserialize)]
 pub(super) struct TurnAuth {
+    #[serde(rename = "credentials")]
     credentials: String,
-    secret: String,
+    secret: Option<String>,
 }
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Deserialize)]
 pub(super) struct TurnConfig {
+    #[serde(rename = "enabled")]
     pub(super) enabled: bool,
+    #[serde(rename = "realm")]
     realm: String,
+    #[serde(rename = "address")]
     address: String,
-    cert: String,
-    key: String,
+    cert: Option<String>,
+    key: Option<String>,
     auth: TurnAuth,
-    pub(super) port_range: Vec<u16>,
+    pub(super) port_range: Option<Vec<u16>>,
 }
 
 struct CustomAuthHandler {
@@ -79,8 +85,8 @@ pub(super) async fn init_turn_server(
     let mut new_auth: Option<Arc<dyn AuthHandler + Send + Sync>> = auth;
 
     if new_auth.is_none() {
-        if conf.auth.secret != "" {
-            new_auth = Some(Arc::new(LongTermAuthHandler::new(conf.auth.secret)));
+        if let Some(secret) = conf.auth.secret {
+            new_auth = Some(Arc::new(LongTermAuthHandler::new(secret)));
         } else {
             let mut users_map: HashMap<String, Vec<u8>> = HashMap::new();
             let re = Regex::new(r"(\w+)=(\w+)").unwrap();
@@ -106,9 +112,11 @@ pub(super) async fn init_turn_server(
     let mut min_port: u16 = TURN_MIN_PORT;
     let mut max_port: u16 = TURN_MAX_PORT;
 
-    if conf.port_range.len() == 2 {
-        min_port = conf.port_range[0];
-        max_port = conf.port_range[1];
+    if let Some(port_range) = conf.port_range {
+        if port_range.len() == 2 {
+            min_port = port_range[0];
+            max_port = port_range[1];
+        }
     }
 
     let addr: Vec<&str> = conf.address.split(':').collect();
