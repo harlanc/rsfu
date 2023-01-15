@@ -445,7 +445,7 @@ impl DownTrack {
             return None;
         }
 
-        let mid = self.transceiver.as_ref().unwrap().mid().await;
+        let mid = self.transceiver.as_ref().unwrap().mid();
 
         let ssrc = self.down_track_local.ssrc.lock().await.clone();
 
@@ -461,7 +461,7 @@ impl DownTrack {
                 source: ssrc,
                 items: vec![SourceDescriptionItem {
                     sdes_type: SdesType::SdesCname,
-                    text: Bytes::copy_from_slice(mid.as_bytes()),
+                    text: Bytes::copy_from_slice(mid.unwrap().as_bytes()),
                 }],
             },
         ])

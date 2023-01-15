@@ -280,20 +280,17 @@ impl Peer {
                                     f().await;
                                 }
                             })
-                        }))
-                        .await;
+                        }));
                         d.on_message(Box::new(move |d: DataChannelMessage| {
                             Box::pin(async move {
                                 //  self.handle_request(d).await;
                             })
-                        }))
-                        .await;
+                        }));
                     })
                 } else {
                     Box::pin(async {})
                 }
-            }))
-            .await;
+            }));
 
         //  Ok(p)
     }
@@ -355,8 +352,7 @@ impl Peer {
                     gather_finished_tx.take();
                 }
                 Box::pin(async {})
-            }))
-            .await;
+            }));
 
         self.ice_gatherer.gather().await?;
 
@@ -393,16 +389,14 @@ impl Peer {
 
         let on_ready_handler2 = Arc::clone(&self.on_ready_handler);
 
-        self.signaling_dc
-            .on_open(Box::new(move || {
-                Box::pin(async move {
-                    let mut handler = on_ready_handler2.lock().await;
-                    if let Some(f) = &mut *handler {
-                        f().await;
-                    }
-                })
-            }))
-            .await;
+        self.signaling_dc.on_open(Box::new(move || {
+            Box::pin(async move {
+                let mut handler = on_ready_handler2.lock().await;
+                if let Some(f) = &mut *handler {
+                    f().await;
+                }
+            })
+        }));
 
         //self.signaling_dc.on_message(f)
 
@@ -426,8 +420,7 @@ impl Peer {
                     gather_finished_tx.take();
                 }
                 Box::pin(async {})
-            }))
-            .await;
+            }));
 
         self.ice_gatherer.gather().await?;
 
@@ -650,7 +643,7 @@ impl Peer {
         let sdr = self
             .api
             .new_rtp_sender(
-                Arc::clone(&local_track),
+                Some(Arc::clone(&local_track)),
                 Arc::clone(&self.dtls_transport),
                 Arc::new(NoOp {}),
             )

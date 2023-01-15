@@ -15,6 +15,8 @@ use webrtc::peer_connection::signaling_state::RTCSignalingState;
 use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
+use webrtc::rtp_transceiver::RTCRtpTransceiver;
+
 use webrtc::rtp_transceiver::RTCPFeedback;
 
 use webrtc::peer_connection::configuration::RTCConfiguration;
@@ -166,76 +168,72 @@ impl Publisher {
         let peer_connection_out = self.pc.clone();
         let peer_connection_out_2 = self.pc.clone();
 
-        self.pc
-            .on_track(Box::new(
-                move |track: Option<Arc<TrackRemote>>, receiver: Option<Arc<RTCRtpReceiver>>| {
-                    let router_in = Arc::clone(&router_out);
-                    let router_in2 = Arc::clone(&router_out);
-                    let session_in = Arc::clone(&session_out);
-                    let tracks_in = Arc::clone(&tracks_out);
-                    let relay_peers_in = Arc::clone(&relay_peer_out);
-                    let factory_in = Arc::clone(&factory_out);
-                    let peer_id = peer_id_out.clone();
-                    let peer_connection = peer_connection_out.clone();
+        // Arc<TrackRemote>,
+        // Arc<RTCRtpReceiver>,
+        // Arc<RTCRtpTransceiver>,
+        self.pc.on_track(Box::new(
+            move |track: Arc<TrackRemote>,
+                  receiver: Arc<RTCRtpReceiver>,
+                  transceiver: Arc<RTCRtpTransceiver>| {
+                let router_in = Arc::clone(&router_out);
+                let router_in2 = Arc::clone(&router_out);
+                let session_in = Arc::clone(&session_out);
+                let tracks_in = Arc::clone(&tracks_out);
+                let relay_peers_in = Arc::clone(&relay_peer_out);
+                let factory_in = Arc::clone(&factory_out);
+                let peer_id = peer_id_out.clone();
+                let peer_connection = peer_connection_out.clone();
 
-                    Box::pin(async move {
-                        if let Some(receiver_val) = receiver {
-                            if let Some(track_val) = track {
-                                let router = router_in;
-                                let track_id = track_val.id().await;
-                                let track_stream_id = track_val.stream_id().await;
-                                let track_val_clone = track_val.clone();
+                Box::pin(async move {
+                    let receiver_val = receiver;
+                    let track_val = track;
+                    let router = router_in;
+                    let track_id = track_val.id().await;
+                    let track_stream_id = track_val.stream_id().await;
+                    let track_val_clone = track_val.clone();
 
-                                let (receiver, publish) = router
-                                    .add_receiver(
-                                        receiver_val,
-                                        track_val.clone(),
-                                        track_id,
-                                        track_stream_id,
-                                    )
-                                    .await;
+                    let (receiver, publish) = router
+                        .add_receiver(receiver_val, track_val.clone(), track_id, track_stream_id)
+                        .await;
 
-                                let receiver_clone = receiver.clone();
+                    let receiver_clone = receiver.clone();
 
-                                if publish {
-                                    session_in.publish(router_in2, receiver.clone()).await;
+                    if publish {
+                        session_in.publish(router_in2, receiver.clone()).await;
 
-                                    tracks_in.lock().await.push(PublisherTrack {
-                                        track: track_val_clone,
-                                        receiver: receiver_clone,
-                                        client_relay: true,
-                                    });
+                        tracks_in.lock().await.push(PublisherTrack {
+                            track: track_val_clone,
+                            receiver: receiver_clone,
+                            client_relay: true,
+                        });
 
-                                    let mut relay_peers = relay_peers_in.lock().await;
+                        let mut relay_peers = relay_peers_in.lock().await;
 
-                                    for val in &mut *relay_peers {
-                                        if let Err(err) = Publisher::crate_relay_track(
-                                            track_val.clone(),
-                                            receiver.clone(),
-                                            &mut val.peer,
-                                            peer_id.clone(),
-                                            max_packet_track,
-                                            factory_in.clone(),
-                                            peer_connection.clone(),
-                                        )
-                                        .await
-                                        {
-                                            log::error!("create relay track error: {}", err);
-                                        };
-                                    }
-                                } else {
-                                    tracks_in.lock().await.push(PublisherTrack {
-                                        track: track_val_clone,
-                                        receiver,
-                                        client_relay: false,
-                                    })
-                                }
-                            }
+                        for val in &mut *relay_peers {
+                            if let Err(err) = Publisher::crate_relay_track(
+                                track_val.clone(),
+                                receiver.clone(),
+                                &mut val.peer,
+                                peer_id.clone(),
+                                max_packet_track,
+                                factory_in.clone(),
+                                peer_connection.clone(),
+                            )
+                            .await
+                            {
+                                log::error!("create relay track error: {}", err);
+                            };
                         }
-                    })
-                },
-            ))
-            .await;
+                    } else {
+                        tracks_in.lock().await.push(PublisherTrack {
+                            track: track_val_clone,
+                            receiver,
+                            client_relay: false,
+                        })
+                    }
+                })
+            },
+        ));
 
         self.pc
             .on_data_channel(Box::new(move |d: Arc<RTCDataChannel>| {
@@ -249,8 +247,7 @@ impl Publisher {
                 Box::pin(async move {
                     session_in.add_data_channel(peer_id, d).await;
                 })
-            }))
-            .await;
+            }));
 
         self.pc
             .on_ice_connection_state_change(Box::new(move |s: RTCIceConnectionState| {
@@ -272,8 +269,7 @@ impl Publisher {
                         _ => {}
                     }
                 })
-            }))
-            .await;
+            }));
 
         let pc_clone_out = self.pc.clone();
         self.router
@@ -324,8 +320,8 @@ impl Publisher {
         *handler = Some(f);
     }
 
-    pub async fn on_ice_candidate(&self, f: OnLocalCandidateHdlrFn) {
-        self.pc.on_ice_candidate(f).await;
+    pub fn on_ice_candidate(&self, f: OnLocalCandidateHdlrFn) {
+        self.pc.on_ice_candidate(f);
     }
 
     pub async fn on_ice_connection_state_change(&self, f: OnIceConnectionStateChange) {
@@ -366,8 +362,7 @@ impl Publisher {
                             .fanout_message(String::from(""), label_in, msg)
                             .await
                     })
-                }))
-                .await;
+                }));
             }
         }
     }

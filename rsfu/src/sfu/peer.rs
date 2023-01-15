@@ -264,9 +264,11 @@ impl PeerLocal {
                     println!("on_offer 1");
                     Box::pin(async move {
                         if remote_answer_pending_in.load(Ordering::Relaxed) {
+                            println!("on_offer 1.1");
                             (*negotiation_pending_in).store(true, Ordering::Relaxed);
                             return Ok(());
                         }
+                        println!("on_offer 1.2");
 
                         let offer = sub_in.create_offer().await?;
                         (*remote_answer_pending_in).store(true, Ordering::Relaxed);
@@ -285,25 +287,23 @@ impl PeerLocal {
 
             let on_ice_candidate_out = self.on_ice_candidate_handler.clone();
             let closed_out_1 = self.closed.clone();
-            subscriber
-                .on_ice_candidate(Box::new(move |candidate: Option<RTCIceCandidate>| {
-                    let on_ice_candidate_in = on_ice_candidate_out.clone();
-                    let closed_in = closed_out_1.clone();
-                    Box::pin(async move {
-                        if candidate.is_none() {
-                            return;
-                        }
+            subscriber.on_ice_candidate(Box::new(move |candidate: Option<RTCIceCandidate>| {
+                let on_ice_candidate_in = on_ice_candidate_out.clone();
+                let closed_in = closed_out_1.clone();
+                Box::pin(async move {
+                    if candidate.is_none() {
+                        return;
+                    }
 
-                        if let Some(on_ice_candidate) = &mut *on_ice_candidate_in.lock().await {
-                            if !closed_in.load(Ordering::Relaxed) {
-                                if let Ok(val) = candidate.unwrap().to_json().await {
-                                    on_ice_candidate(val, SUBSCRIBER).await;
-                                }
+                    if let Some(on_ice_candidate) = &mut *on_ice_candidate_in.lock().await {
+                        if !closed_in.load(Ordering::Relaxed) {
+                            if let Ok(val) = candidate.unwrap().to_json() {
+                                on_ice_candidate(val, SUBSCRIBER).await;
                             }
                         }
-                    })
-                }))
-                .await;
+                    }
+                })
+            }));
             *self.subscriber.lock().await = Some(subscriber);
         }
 
@@ -330,25 +330,23 @@ impl PeerLocal {
                 .await?,
             );
 
-            publisher
-                .on_ice_candidate(Box::new(move |candidate: Option<RTCIceCandidate>| {
-                    let on_ice_candidate_in = on_ice_candidate_out.clone();
-                    let closed_in = closed_out_1.clone();
-                    Box::pin(async move {
-                        if candidate.is_none() {
-                            return;
-                        }
+            publisher.on_ice_candidate(Box::new(move |candidate: Option<RTCIceCandidate>| {
+                let on_ice_candidate_in = on_ice_candidate_out.clone();
+                let closed_in = closed_out_1.clone();
+                Box::pin(async move {
+                    if candidate.is_none() {
+                        return;
+                    }
 
-                        if let Some(on_ice_candidate) = &mut *on_ice_candidate_in.lock().await {
-                            if !closed_in.load(Ordering::Relaxed) {
-                                if let Ok(val) = candidate.unwrap().to_json().await {
-                                    on_ice_candidate(val, PUBLISHER).await;
-                                }
+                    if let Some(on_ice_candidate) = &mut *on_ice_candidate_in.lock().await {
+                        if !closed_in.load(Ordering::Relaxed) {
+                            if let Ok(val) = candidate.unwrap().to_json() {
+                                on_ice_candidate(val, PUBLISHER).await;
                             }
                         }
-                    })
-                }))
-                .await;
+                    }
+                })
+            }));
 
             let on_ice_connection_state_change_out = self.on_ice_connection_state_change.clone();
             let closed_out_2 = self.closed.clone();
@@ -413,6 +411,7 @@ impl PeerLocal {
 
             if self.negotiation_pending.load(Ordering::Relaxed) {
                 self.negotiation_pending.store(false, Ordering::Relaxed);
+                log::info!("set_remote_description 2 Negotiate");
                 subscriber.negotiate().await;
             }
         } else {

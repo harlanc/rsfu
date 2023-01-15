@@ -167,7 +167,7 @@ pub(super) async fn get_publisher_media_engine() -> Result<MediaEngine> {
                 uri: String::from(extention),
             },
             RTPCodecType::Video,
-            Vec::new(),
+            None,
         )?;
     }
 
@@ -183,7 +183,7 @@ pub(super) async fn get_publisher_media_engine() -> Result<MediaEngine> {
                 uri: String::from(extention),
             },
             RTPCodecType::Audio,
-            Vec::new(),
+            None,
         )?;
     }
     Ok(me)

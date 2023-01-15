@@ -41,6 +41,7 @@ use super::data_channel::{DataChannel, ProcessArgs, ProcessFunc};
 // use super::errors::{Result, SfuError};
 
 use anyhow::Result;
+use fns;
 
 pub const API_CHANNEL_LABEL: &'static str = "rsfu";
 
@@ -73,7 +74,6 @@ impl Subscriber {
         let pc = api
             .new_peer_connection(RTCConfiguration {
                 ice_servers: cfg.configuration.ice_servers.clone(),
-                sdp_semantics: cfg.configuration.sdp_semantics.clone(),
                 ..Default::default()
             })
             .await?;
@@ -142,8 +142,7 @@ impl Subscriber {
                     process(msg, tracks.clone()).await;
                 }
             })
-        }))
-        .await;
+        }));
 
         self.channels
             .lock()
@@ -162,18 +161,22 @@ impl Subscriber {
 
     pub async fn on_negotiate(&self, f: OnNegotiateFn) {
         let mut handler = self.on_negotiate_handler.lock().await;
+
+        //let debounce_fn = fns::debounce(f, std::time::Duration::from_secs(1));
         *handler = Some(f);
     }
 
     pub async fn create_offer(&self) -> Result<RTCSessionDescription> {
+        log::info!("crate_offer 0");
         let offer = self.pc.create_offer(None).await?;
+        log::info!("crate_offer 1");
         self.pc.set_local_description(offer.clone()).await?;
-
+        log::info!("crate_offer 2");
         Ok(offer)
     }
 
-    pub async fn on_ice_candidate(&self, f: OnLocalCandidateHdlrFn) {
-        self.pc.on_ice_candidate(f).await
+    pub fn on_ice_candidate(&self, f: OnLocalCandidateHdlrFn) {
+        self.pc.on_ice_candidate(f)
     }
 
     pub async fn add_ice_candidate(&self, candidate: RTCIceCandidateInit) -> Result<()> {
@@ -271,6 +274,7 @@ impl Subscriber {
         println!("on_offer negotiate");
         let mut handler = self.on_negotiate_handler.lock().await;
         if let Some(f) = &mut *handler {
+            //sleep(Duration::from_millis(1000)).await;
             f().await?;
         }
         Ok(())
@@ -279,8 +283,8 @@ impl Subscriber {
     async fn on_ice_connection_state_change(&self) {
         let pc_out = Arc::clone(&self.pc);
 
-        self.pc
-            .on_ice_connection_state_change(Box::new(move |ice_state: RTCIceConnectionState| {
+        self.pc.on_ice_connection_state_change(Box::new(
+            move |ice_state: RTCIceConnectionState| {
                 let pc_in = Arc::clone(&pc_out);
                 Box::pin(async move {
                     match ice_state {
@@ -290,8 +294,8 @@ impl Subscriber {
                         _ => {}
                     }
                 })
-            }))
-            .await;
+            },
+        ));
     }
 
     async fn down_track_reports(&self) {

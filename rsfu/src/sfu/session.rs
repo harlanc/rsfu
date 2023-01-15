@@ -286,8 +286,7 @@ impl Session for SessionLocal {
                     Box::pin(async move {
                         SessionLocal::fanout_message(data_channels_in, msg).await;
                     })
-                }))
-                .await;
+                }));
                 return;
             }
         }
@@ -311,8 +310,7 @@ impl Session for SessionLocal {
             Box::pin(async move {
                 SessionLocal::fanout_message(data_channels_in, msg).await;
             })
-        }))
-        .await;
+        }));
         log::info!("add_data_channel 1..");
         for peer in &self.peers().await {
             log::info!("add_data_channel 2..");
@@ -329,19 +327,17 @@ impl Session for SessionLocal {
             let subscriber = peer.subscriber().await.unwrap();
             if let Ok(channel) = subscriber.add_data_channel_2(label.clone()).await {
                 let data_channels_out_3 = data_channels_out_2.clone();
-                channel
-                    .on_message(Box::new(move |msg: DataChannelMessage| {
-                        let data_channels_in = data_channels_out_3.clone();
-                        Box::pin(async move {
-                            SessionLocal::fanout_message(data_channels_in, msg).await;
-                        })
-                    }))
-                    .await;
+                channel.on_message(Box::new(move |msg: DataChannelMessage| {
+                    let data_channels_in = data_channels_out_3.clone();
+                    Box::pin(async move {
+                        SessionLocal::fanout_message(data_channels_in, msg).await;
+                    })
+                }));
                 //todo
             } else {
                 continue;
             }
-
+            log::info!("AddDataChannel Negotiate");
             subscriber.negotiate().await;
         }
     }
@@ -359,7 +355,10 @@ impl Session for SessionLocal {
             if router_val.id() == peer.id().await || subscriber.is_none() {
                 continue;
             }
-            log::info!("Publishing track to peer, peer_id: {}", self.id());
+            log::info!(
+                "PeerLocal Publishing track to peer, peer_id: {}",
+                peer.id().await
+            );
             if router_val
                 .add_down_tracks(peer.subscriber().await.unwrap(), Some(r.clone()))
                 .await
@@ -371,6 +370,7 @@ impl Session for SessionLocal {
     }
     async fn subscribe(&self, peer: Arc<dyn Peer + Send + Sync>) {
         log::info!("subscribe...");
+
         let fanout_data_channels = self.fanout_data_channels.lock().await;
         for label in &*fanout_data_channels {
             if let Some(subscriber) = peer.subscriber().await {
@@ -384,8 +384,7 @@ impl Session for SessionLocal {
                             Box::pin(async move {
                                 SessionLocal::fanout_message(data_channels_in, msg).await;
                             })
-                        }))
-                        .await;
+                        }));
                         //todo
                     }
 
@@ -400,14 +399,15 @@ impl Session for SessionLocal {
 
         for (_, cur_peer) in &*peers {
             //	Logger.V(0).Info("Subscribe to publisher streams...........", "peer_id", p.ID())
-            log::info!(
-                "Subscribe to publisher streams , peer_id:{}",
-                peer.id().await
-            );
+
             if cur_peer.id().await == peer.id().await || cur_peer.publisher().await.is_none() {
                 continue;
             }
-
+            log::info!(
+                "PeerLocal Subscribe to publisher streams , cur_peer_id:{} , peer_id:{}",
+                cur_peer.id().await,
+                peer.id().await
+            );
             let router = cur_peer.publisher().await.unwrap().get_router();
             if router
                 .add_down_tracks(peer.subscriber().await.unwrap(), None)
@@ -419,6 +419,7 @@ impl Session for SessionLocal {
         }
 
         //todo
+        log::info!("Subscribe Negotiate");
         peer.subscriber().await.unwrap().negotiate().await;
     }
 

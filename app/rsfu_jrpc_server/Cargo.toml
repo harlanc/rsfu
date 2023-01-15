@@ -23,12 +23,26 @@ rsfu = {path = "../../rsfu/"}#"0.0.4"
 jrpc2 =  {path = "../../jsonrpc2-rs/"}#"0.0.4"
 uuid = "1.2.1"
 bytesio = "0.1.27"
-rtcp = "0.7.0"
-rtp = "0.6.7"
-sdp = "0.5.2"
-turn = "0.6.0"
-webrtc = "0.5.1"
-webrtc-ice = "0.8.1"
+
+# rtcp = "0.7.0"
+# rtp = "0.6.7"
+# sdp = "0.5.2"
+# turn = "0.6.0"
+# webrtc = "0.5.1"
+# webrtc-ice = "0.8.1"
+# interceptor = "0.8.0"
+# webrtc-util =  "0.6.0"
+
+
+rtcp ={ "path" = "/Users/zexu/github/webrtc/rtcp" }# "0.7.0"
+rtp ={ "path" = "/Users/zexu/github/webrtc/rtp" }# "0.6.7"
+sdp ={ "path" = "/Users/zexu/github/webrtc/sdp" }# "0.5.2"
+turn = { "path" = "/Users/zexu/github/webrtc/turn" }#"0.6.0"
+webrtc = { "path" = "/Users/zexu/github/webrtc/webrtc" } #"0.5.1"
+webrtc-ice ={ "path" = "/Users/zexu/github/webrtc/ice" }# "0.8.1"
+interceptor = { "path" = "/Users/zexu/github/webrtc/interceptor" }#"0.8.0"
+webrtc-util = { "path" = "/Users/zexu/github/webrtc/util" }#"0.6.0"
+
 byteorder = "1.4.2"
 thiserror = "1.0.25"
 async-trait = "0.1.51"
@@ -36,8 +50,7 @@ async-trait = "0.1.51"
 
 
 bytes = "1.1.0"
-interceptor = "0.8.0"
-webrtc-util =  "0.6.0"
+
 
 
 

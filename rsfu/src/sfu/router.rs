@@ -480,6 +480,7 @@ impl Router for RouterLocal {
 
         if let Some(receiver) = r {
             self.add_down_track(s.clone(), receiver).await?;
+            log::info!("AddDownTracks  Negotiate");
             s.negotiate().await;
             return Ok(());
         }
@@ -496,6 +497,7 @@ impl Router for RouterLocal {
             for val in recs {
                 self.add_down_track(s.clone(), val.clone()).await?;
             }
+            log::info!("AddDownTracks 2 Negotiate");
             s.negotiate().await;
         }
 
@@ -553,10 +555,10 @@ impl Router for RouterLocal {
         let transceiver =
             s.pc.add_transceiver_from_track(
                 down_track_arc.clone(),
-                &[RTCRtpTransceiverInit {
+                Some(RTCRtpTransceiverInit {
                     direction: RTCRtpTransceiverDirection::Sendonly,
                     send_encodings: Vec::new(),
-                }],
+                }),
             )
             .await?;
         log::info!("add_down_track 3..");
@@ -580,12 +582,13 @@ impl Router for RouterLocal {
                     if s_in.pc.connection_state() != RTCPeerConnectionState::Closed {
                         let rv = s_in
                             .pc
-                            .remove_track(&transceiver_in.sender().await.unwrap())
+                            .remove_track(&transceiver_in.sender().await)
                             .await;
                         match rv {
                             Ok(_) => {
                                 s_in.remove_down_track(r_in.stream_id(), down_track_arc_in)
                                     .await;
+                                log::info!("RemoveDownTrack Negotiate");
                                 s_in.negotiate().await;
                             }
                             Err(err) => match err {

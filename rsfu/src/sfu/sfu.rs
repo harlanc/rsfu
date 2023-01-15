@@ -198,7 +198,6 @@ impl WebRTCTransportConfig {
         let mut w = WebRTCTransportConfig {
             configuration: RTCConfiguration {
                 ice_servers: ice_servers,
-                sdp_semantics: sdp_semantics,
                 ..Default::default()
             },
             setting: se,
