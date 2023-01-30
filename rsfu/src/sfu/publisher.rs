@@ -304,7 +304,7 @@ impl Publisher {
         for c in &*self.candidates.lock().await {
             if let Err(err) = self.pc.add_ice_candidate(c.clone()).await {}
         }
-
+        
         let answer = self.pc.create_answer(None).await?;
         self.pc.set_local_description(answer.clone()).await?;
 

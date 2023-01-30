@@ -348,18 +348,17 @@ impl Session for SessionLocal {
         r: Arc<dyn Receiver + Send + Sync>,
     ) {
         log::info!("publish.................");
-        let mut router_val = router;
         for peer in self.peers().await {
             log::info!("publish 0.......................");
             let subscriber = peer.subscriber().await;
-            if router_val.id() == peer.id().await || subscriber.is_none() {
+            if router.id() == peer.id().await || subscriber.is_none() {
                 continue;
             }
             log::info!(
                 "PeerLocal Publishing track to peer, peer_id: {}",
                 peer.id().await
             );
-            if router_val
+            if router
                 .add_down_tracks(peer.subscriber().await.unwrap(), Some(r.clone()))
                 .await
                 .is_err()

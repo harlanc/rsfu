@@ -137,7 +137,17 @@ impl AtomicSequencer {
             sequencer.step = 0;
         }
 
-        Some(sequencer.seq.get(&sequencer.step).unwrap().clone())
+
+        if let Some(data) = sequencer.seq.get(&sequencer.step)
+        {
+            Some(data.clone())
+        }else
+        {
+                    log::info!("sequencer step: {}",sequencer.step);
+            None
+        }
+
+       // Some(sequencer.seq.get(&sequencer.step).unwrap().clone())
     }
 
     pub async fn get_seq_no_pairs(&self, seq_nos: &[u16]) -> Vec<PacketMeta> {

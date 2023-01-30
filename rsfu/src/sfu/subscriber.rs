@@ -18,6 +18,7 @@ use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::rtcp::source_description::SourceDescription;
 use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
+use webrtc::api::media_engine::{ MIME_TYPE_OPUS, MIME_TYPE_VP8};
 
 use super::peer::Peer;
 use crate::middlewares::middlewares::SetRemoteMedia;
@@ -40,8 +41,11 @@ use super::data_channel::{DataChannel, ProcessArgs, ProcessFunc};
 // use super::errors::SfuErrorValue;
 // use super::errors::{Result, SfuError};
 
-use anyhow::Result;
-use fns;
+// use anyhow::Result;
+use super::errors::Result;
+use webrtc::rtp_transceiver::rtp_codec::{
+    RTCRtpCodecCapability, RTCRtpCodecParameters,
+};
 
 pub const API_CHANNEL_LABEL: &'static str = "rsfu";
 
@@ -62,7 +66,37 @@ pub struct Subscriber {
 
 impl Subscriber {
     pub async fn new(id: String, cfg: Arc<WebRTCTransportConfig>) -> Result<Subscriber> {
-        let me = media_engine::get_subscriber_media_engine()?;
+        let mut me = media_engine::get_subscriber_media_engine()?;
+
+        me.register_codec(
+            RTCRtpCodecParameters {
+                capability: RTCRtpCodecCapability {
+                    mime_type: MIME_TYPE_VP8.to_owned(),
+                    clock_rate: 90000,
+                    channels: 0,
+                    sdp_fmtp_line: "".to_owned(),
+                    rtcp_feedback: vec![],
+                },
+                payload_type: 96,
+                ..Default::default()
+            },
+            RTPCodecType::Video,
+        )?;
+    
+        me.register_codec(
+            RTCRtpCodecParameters {
+                capability: RTCRtpCodecCapability {
+                    mime_type: MIME_TYPE_OPUS.to_owned(),
+                    clock_rate: 48000,
+                    channels: 2,
+                    sdp_fmtp_line: "".to_owned(),
+                    rtcp_feedback: vec![],
+                },
+                payload_type: 111,
+                ..Default::default()
+            },
+            RTPCodecType::Audio,
+        )?;
 
         // let transport_cfg = cfg.lock().await;
 
@@ -393,7 +427,7 @@ impl Subscriber {
     }
 
     pub async fn close(&self) -> Result<()> {
-        self.pc.close().await.map_err(anyhow::Error::msg)?;
+        self.pc.close().await?;
         Ok(())
     }
 

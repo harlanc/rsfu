@@ -224,6 +224,7 @@ impl Router for RouterLocal {
                 }
             }
             RTPCodecType::Video => {
+                log::info!("track video");
                 if self.twcc.lock().await.is_none() {
                     let mut twcc = Responder::new(track.ssrc());
                     let sender = Arc::clone(&self.rtcp_sender_channel);
@@ -481,7 +482,7 @@ impl Router for RouterLocal {
         if let Some(receiver) = r {
             self.add_down_track(s.clone(), receiver).await?;
             log::info!("AddDownTracks  Negotiate");
-            s.negotiate().await;
+            s.negotiate().await?;
             return Ok(());
         }
 
@@ -498,7 +499,7 @@ impl Router for RouterLocal {
                 self.add_down_track(s.clone(), val.clone()).await?;
             }
             log::info!("AddDownTracks 2 Negotiate");
-            s.negotiate().await;
+            s.negotiate().await?;
         }
 
         Ok(())
@@ -580,10 +581,7 @@ impl Router for RouterLocal {
                 let down_track_arc_in = down_track_arc_out.clone();
                 Box::pin(async move {
                     if s_in.pc.connection_state() != RTCPeerConnectionState::Closed {
-                        let rv = s_in
-                            .pc
-                            .remove_track(&transceiver_in.sender().await)
-                            .await;
+                        let rv = s_in.pc.remove_track(&transceiver_in.sender().await).await;
                         match rv {
                             Ok(_) => {
                                 s_in.remove_down_track(r_in.stream_id(), down_track_arc_in)
@@ -638,8 +636,11 @@ impl Router for RouterLocal {
             let mut stop_receiver = self.stop_receiver_channel.lock().await;
             tokio::select! {
               data = rtcp_receiver.recv() => {
+                log::info!("send_rtcp");
                 if let Some(val) = data{
+                    log::info!("send_rtcp 1");
                     if let Some(f) = &mut *self.rtcp_writer_handler.lock().await {
+                        log::info!("send_rtcp 2");
                         f(val);
                     }
                 }

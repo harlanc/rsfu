@@ -412,7 +412,7 @@ impl PeerLocal {
             if self.negotiation_pending.load(Ordering::Relaxed) {
                 self.negotiation_pending.store(false, Ordering::Relaxed);
                 log::info!("set_remote_description 2 Negotiate");
-                subscriber.negotiate().await;
+                subscriber.negotiate().await?;
             }
         } else {
             return Err(Error::ErrNoTransportEstablished.into());

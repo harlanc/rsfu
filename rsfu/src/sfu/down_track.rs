@@ -1,14 +1,16 @@
 // DownTrackType determines the type of track
 //type DownTrackType =  u16;
 
+use super::errors::Error;
+use super::errors::Result;
 use super::sequencer::{self, AtomicSequencer};
 use super::simulcast::SimulcastTrackHelpers;
 use atomic::Atomic;
 use rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use rtp::extension::audio_level_extension::AudioLevelExtension;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU32, Ordering};
-use webrtc::error::{Error as WEBRTCError, Result};
-
+use webrtc::error::Error as WEBRTCError;
+use webrtc::error::Result as RTCResult;
 use super::helpers;
 use super::receiver::Receiver;
 use super::sequencer::PacketMeta;
@@ -209,10 +211,13 @@ impl DownTrack {
 
     async fn stop(&self) -> Result<()> {
         if let Some(transceiver) = &self.transceiver {
-            return transceiver.stop().await;
+            let rv = transceiver.stop().await?;
+            return Ok(());
         }
 
-        Err(WEBRTCError::new(String::from("transceiver not exists")))
+        Err(Error::ErrWebRTC(WEBRTCError::new(String::from(
+            "transceiver not exists",
+        ))))
     }
 
     pub async fn ssrc(&self) -> u32 {
@@ -252,19 +257,20 @@ impl DownTrack {
     }
 
     pub async fn write_rtp(&self, pkt: ExtPacket, layer: usize) -> Result<()> {
-        //log::info!("write_rtp...");
+        let cur_payload_type = self.down_track_local.payload_type.lock().await.clone();
+        log::info!("write_rtp...:{}", cur_payload_type);
         if !self.down_track_local.enabled.load(Ordering::Relaxed) {
-           // log::info!("write_rtp 0.1...");
+            // log::info!("write_rtp 0.1...");
             return Ok(());
         }
         if !self.bound() {
             log::info!("write_rtp 0.2...");
             return Ok(());
         }
-        log::info!("write_rtp 0...");
+        //log::info!("write_rtp 0...");
         match *self.track_type.lock().await {
             DownTrackType::SimpleDownTrack => {
-                log::info!("write_rtp 1...");
+                log::info!("write_rtp 1...:{}", cur_payload_type);
                 return self.write_simple_rtp(pkt).await;
             }
             DownTrackType::SimulcastDownTrack => {
@@ -328,7 +334,12 @@ impl DownTrack {
             DownTrackType::SimulcastDownTrack => {
                 let csl = self.current_spatial_layer.load(Ordering::Relaxed);
                 if csl != self.target_spatial_layer.load(Ordering::Relaxed) || csl == target_layer {
-                    return Err(WEBRTCError::new(String::from("error spatial layer busy..")));
+                    //return Err(WEBRTCError::new(String::from("error spatial layer busy..")));
+                    //return Err(ErrWebRTC::)
+
+                    return Err(Error::ErrWebRTC(
+                        WEBRTCError::new(String::from("error spatial layer busy..")).into(),
+                    ));
                 }
                 let receiver = &self.down_track_local.receiver;
                 match receiver
@@ -350,9 +361,9 @@ impl DownTrack {
             _ => {}
         }
 
-        Err(WEBRTCError::new(String::from(
+        Err(Error::ErrWebRTC(WEBRTCError::new(String::from(
             "Error spatial not supported.",
-        )))
+        ))))
     }
 
     pub fn switch_spatial_layer_done(&self, layer: i32) {
@@ -399,10 +410,11 @@ impl DownTrack {
             }
             _ => {}
         }
-        Err(WEBRTCError::new(format!(
+
+        Err(Error::ErrWebRTC(WEBRTCError::new(format!(
             "downtrack {} does not support simulcast",
             self.down_track_local.id
-        )))
+        ))))
     }
 
     pub async fn switch_temporal_layer(&self, target_layer: i32, set_as_max: bool) {
@@ -512,39 +524,57 @@ impl DownTrack {
     }
 
     async fn write_simple_rtp(&self, packet: ExtPacket) -> Result<()> {
+      
+        let cur_payload_type = self.down_track_local.payload_type.lock().await.clone();
+          if cur_payload_type == 96{
+            log::info!("write_simple_rtp PLI ");
+        }
+        //log::info!("write_simple_rtp payload type 0: {}", cur_payload_type);
         let mut ext_packet = packet.clone();
         let ssrc = self.down_track_local.ssrc.lock().await.clone();
+        //log::info!("write_simple_rtp payload type 0.1: {}", cur_payload_type);
         if self.down_track_local.re_sync.load(Ordering::Relaxed) {
+            //log::info!("write_simple_rtp payload type 0.2: {}", cur_payload_type);
             match self.down_track_local.kind() {
                 RTPCodecType::Video => {
+                    //log::info!("write_simple_rtp payload type 0.3: {}", cur_payload_type);
                     if !ext_packet.key_frame {
                         let receiver = &self.down_track_local.receiver;
+                        //log::info!("write_simple_rtp payload type 0.4: {}", cur_payload_type);
+                        log::info!("send PLI ssrc:{}, media_ssrc:{}",ssrc,ext_packet.packet.header.ssrc);
                         receiver.send_rtcp(vec![Box::new(PictureLossIndication {
                             sender_ssrc: ssrc,
                             media_ssrc: ext_packet.packet.header.ssrc,
-                        })]);
+                        })])?;
+                        //log::info!("write_simple_rtp payload type 0.5: {}", cur_payload_type);
                         return Ok(());
                     }
+                    log::info!("get PLI");
                 }
                 _ => {}
             }
-
+            //log::info!("write_simple_rtp payload type 0.6: {}", cur_payload_type);
             if *self.last_sn.lock().await != 0 {
+               // log::info!("write_simple_rtp payload type 0.7: {}", cur_payload_type);
                 let mut sn_offset = self.sn_offset.lock().await;
                 *sn_offset =
                     ext_packet.packet.header.sequence_number - *self.last_sn.lock().await - 1;
                 let mut ts_offset = self.ts_offset.lock().await;
                 *ts_offset = ext_packet.packet.header.timestamp - *self.last_ts.lock().await - 1
             }
-
+            //log::info!("write_simple_rtp payload type 0.8: {}", cur_payload_type);
             self.down_track_local
                 .last_ssrc
                 .store(ext_packet.packet.header.ssrc, Ordering::Relaxed);
+            //log::info!("write_simple_rtp payload type 0.9: {}", cur_payload_type);
             self.down_track_local
                 .re_sync
                 .store(false, Ordering::Relaxed);
         }
-
+        if cur_payload_type == 96{
+            log::info!("get PLI 2");
+        }
+       // log::info!("write_simple_rtp payload type 1: {}", cur_payload_type);
         self.update_stats(ext_packet.packet.payload.len() as u32);
 
         let new_sn = ext_packet.packet.header.sequence_number - *self.sn_offset.lock().await;
@@ -560,7 +590,7 @@ impl DownTrack {
                 ext_packet.head,
             )
             .await;
-
+        //log::info!("write_simple_rtp payload type 2: {}", cur_payload_type);
         if ext_packet.head {
             let mut last_sn = self.last_sn.lock().await;
             *last_sn = new_sn;
@@ -568,13 +598,16 @@ impl DownTrack {
             *last_ts = new_ts;
         }
         let header = &mut ext_packet.packet.header;
-        header.payload_type = self.down_track_local.payload_type.lock().await.clone();
+        header.payload_type = cur_payload_type;
         header.timestamp = new_ts;
         header.sequence_number = new_sn;
         header.ssrc = ssrc;
+
         let write_stream_val = self.down_track_local.write_stream.lock().await;
+        // log::info!("write_simple_rtp payload type : {}", header.payload_type);
         if let Some(write_stream) = &*write_stream_val {
-            write_stream.write_rtp(&ext_packet.packet).await?;
+            let size = write_stream.write_rtp(&ext_packet.packet).await?;
+            log::info!("write_simple_rtp size:..{}", size);
         }
 
         Ok(())
@@ -910,7 +943,7 @@ impl DownTrack {
 impl TrackLocal for DownTrack {
     // async fn bind(&self, t: &TrackLocalContext) -> Result<RTCRtpCodecParameters>;
 
-    async fn bind(&self, t: &TrackLocalContext) -> Result<RTCRtpCodecParameters> {
+    async fn bind(&self, t: &TrackLocalContext) -> RTCResult<RTCRtpCodecParameters> {
         log::info!("TrackLocal bind.......");
         self.down_track_local.bind(t).await
     }
@@ -919,7 +952,7 @@ impl TrackLocal for DownTrack {
     // /// because a track has been stopped.
     // async fn unbind(&self, t: &TrackLocalContext) -> Result<()>;
 
-    async fn unbind(&self, t: &TrackLocalContext) -> Result<()> {
+    async fn unbind(&self, t: &TrackLocalContext) -> RTCResult<()> {
         self.down_track_local.unbind(t).await
     }
 

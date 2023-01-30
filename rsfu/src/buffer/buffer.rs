@@ -171,6 +171,7 @@ impl AtomicBuffer {
         buffer.clock_rate = codec.capability.clock_rate;
         buffer.max_bitrate = o.max_bitrate;
         buffer.mime = codec.capability.mime_type.to_lowercase();
+        log::info!("Buffer bind: {}", buffer.mime);
 
         if buffer.mime.starts_with("audio/") {
             buffer.codec_type = RTPCodecType::Audio;
@@ -227,15 +228,31 @@ impl AtomicBuffer {
     }
 
     pub async fn read_extended(&self) -> Result<ExtPacket> {
+        let codc_type = self.buffer.lock().await.codec_type; //= RTPCodecType::Video;
         loop {
+            if codc_type == RTPCodecType::Video {
+                //log::info!("read_extended 0");
+            }
             if self.buffer.lock().await.closed {
+                //log::info!("read_extended 0.1");
                 return Err(Error::ErrIOEof.into());
             }
-
+            if codc_type == RTPCodecType::Video {
+                //log::info!("read_extended 1");
+            }
             let ext_packets = &mut self.buffer.lock().await.ext_packets;
             if ext_packets.len() > 0 {
+                if codc_type == RTPCodecType::Video {
+                    //log::info!("read_extended 1.1");
+                }
                 let ext_pkt = ext_packets.pop_front().unwrap();
+                if codc_type == RTPCodecType::Video {
+                    //log::info!("read_extended 2");
+                }
                 return Ok(ext_pkt);
+            }
+            if codc_type == RTPCodecType::Video {
+                //log::info!("read_extended 3");
             }
             sleep(Duration::from_millis(10)).await;
         }
@@ -247,14 +264,22 @@ impl AtomicBuffer {
         *handler = Some(f);
     }
 
+    
+
+
+
     pub async fn calc(&self, pkt: &[u8], arrival_time: i64) {
         // println!("calc 1....");
+        let codc_type = self.buffer.lock().await.codec_type; //= RTPCodecType::Video;
+        if codc_type == RTPCodecType::Video {
+           // log::info!("calc 0");
+        }
         let buffer = &mut self.buffer.lock().await;
-        // println!("calc 2....");
-        let sn = BigEndian::read_u16(&pkt[2..4]);
-
-        let distance = bucket::distance(sn, buffer.max_seq_no);
-
+        
+        let sn = BigEndian::read_u16(&pkt[2..4]);  if codc_type == RTPCodecType::Video {
+        log::info!("calc 2....: sn: {}",sn);}
+        let distance = bucket::distance(sn, buffer.max_seq_no);  if codc_type == RTPCodecType::Video {
+        log::info!("calc 3....: distance: {}",distance);}
         if buffer.stats.packet_count == 0 {
             buffer.base_sn = sn;
             buffer.max_seq_no = sn;
@@ -297,7 +322,9 @@ impl AtomicBuffer {
                 nacker.remove(ext_sn);
             }
         }
-
+        if codc_type == RTPCodecType::Video {
+            //log::info!("calc 1");
+        }
         let mut packet: Packet = Packet::default();
 
         let max_seq_no = buffer.max_seq_no;
@@ -310,7 +337,8 @@ impl AtomicBuffer {
                         println!("calc error 0....");
                         return;
                     }
-                    Ok(p) => {
+                    Ok(p) => {  if codc_type == RTPCodecType::Video {
+                        log::info!("calc packet size: {}",data.len());}
                         packet = p;
                     }
                 },
@@ -321,7 +349,9 @@ impl AtomicBuffer {
                 }
             }
         }
-
+        if codc_type == RTPCodecType::Video {
+            //log::info!("calc 2");
+        }
         buffer.stats.total_byte += pkt.len() as u64;
         buffer.bitrate_helper += pkt.len() as u64;
         buffer.stats.packet_count += 1;
@@ -338,8 +368,8 @@ impl AtomicBuffer {
         match buffer.mime.as_str() {
             "video/vp8" => {
                 let mut vp8_packet = helpers::VP8::default();
-                if let Err(_) = vp8_packet.unmarshal(&packet.payload[..]) {
-                    println!("calc error 3....");
+                if let Err(e) = vp8_packet.unmarshal(&packet.payload[..]) {
+                    println!("calc error 3....: {}",e);
                     return;
                 }
                 ep.key_frame = vp8_packet.is_key_frame;
@@ -366,7 +396,9 @@ impl AtomicBuffer {
 
             buffer.min_packet_probe += 1;
         }
-
+        if codc_type == RTPCodecType::Video {
+            //log::info!("calc 3");
+        }
         buffer.ext_packets.push_back(ep);
 
         // if first time update or the timestamp is later (factoring timestamp wrap around)
@@ -390,7 +422,9 @@ impl AtomicBuffer {
             buffer.stats.jitter += (d - buffer.stats.jitter) / 16 as f64;
         }
         buffer.last_transit = transit as u32;
-
+        if codc_type == RTPCodecType::Video {
+            //log::info!("calc 4");
+        }
         if buffer.twcc {
             if let Some(mut ext) = packet.header.get_extension(buffer.twcc_ext) {
                 if ext.len() > 1 {
@@ -414,17 +448,21 @@ impl AtomicBuffer {
                 }
             }
         }
-
+        if codc_type == RTPCodecType::Video {
+           // log::info!("calc 5");
+        }
         let diff = arrival_time - buffer.last_report;
 
         if buffer.nacker.is_some() {
-            let rv = self.build_nack_packet().await;
+            let rv = self.build_nack_packet(buffer).await;
             let mut handler = buffer.on_feedback_callback_handler.lock().await;
             if let Some(f) = &mut *handler {
                 f(rv).await;
             }
         }
-
+        if codc_type == RTPCodecType::Video {
+            //log::info!("calc 6");
+        }
         if diff as f64 >= REPORT_DELTA {
             let br = 8 * buffer.bitrate_helper * REPORT_DELTA as u64 / diff as u64;
             buffer.bitrate = br;
@@ -433,8 +471,10 @@ impl AtomicBuffer {
         }
     }
 
-    async fn build_nack_packet(&self) -> Vec<Box<dyn RtcpPacket + Send + Sync>> {
-        let buffer = &mut self.buffer.lock().await;
+    async fn build_nack_packet(
+        &self,
+        buffer: &mut Buffer,
+    ) -> Vec<Box<dyn RtcpPacket + Send + Sync>> {
         let mut pkts: Vec<Box<dyn RtcpPacket + Send + Sync>> = Vec::new();
 
         if buffer.nacker == None {

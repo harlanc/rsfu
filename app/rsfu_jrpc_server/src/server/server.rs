@@ -184,7 +184,7 @@ impl THandler<RequestParams, ResponseResult, ErrorData> for JsonSignal {
             }
 
             "answer" => {
-                log::info!("receive offer");
+                log::info!("receive answer");
                 if let Some(Parameters::Negotiation(negotiation)) = request.params {
                     if let Err(err) = self
                         .peer_local
