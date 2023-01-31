@@ -1,11 +1,10 @@
-use super::data_channel::DataChannel;
 use super::router::Router;
 use super::router::RouterLocal;
 use super::session::Session;
 use super::sfu::WebRTCTransportConfig;
-use crate::buffer::rtcpreader::RTCPReader;
+
 use rtcp::packet::Packet as RtcpPacket;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use webrtc::data_channel::data_channel_message::DataChannelMessage;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
@@ -17,11 +16,9 @@ use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
 use webrtc::rtp_transceiver::RTCRtpTransceiver;
 
-use webrtc::rtp_transceiver::RTCPFeedback;
-
-use webrtc::peer_connection::configuration::RTCConfiguration;
-
 use super::receiver::WebRTCReceiver;
+use webrtc::peer_connection::configuration::RTCConfiguration;
+use webrtc::rtp_transceiver::RTCPFeedback;
 
 use super::media_engine;
 use super::receiver::Receiver;
@@ -31,10 +28,10 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Once;
-use tokio::sync::{Mutex, MutexGuard};
+use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 use webrtc::api::APIBuilder;
-use webrtc::api::API;
+
 use webrtc::data_channel::RTCDataChannel;
 use webrtc::track::track_remote::TrackRemote;
 
@@ -115,7 +112,7 @@ impl Publisher {
             .with_setting_engine(setting_engine)
             .build();
 
-        let router = cfg.Router.clone();
+        let router = cfg.router.clone();
 
         let rtc_config_clone = RTCConfiguration {
             ice_servers: cfg.configuration.ice_servers.clone(),
@@ -125,7 +122,7 @@ impl Publisher {
         let config_clone = WebRTCTransportConfig {
             configuration: rtc_config_clone,
             setting: cfg.setting.clone(),
-            Router: cfg.Router.clone(),
+            router: cfg.router.clone(),
             factory: Arc::new(Mutex::new(AtomicFactory::new(1000, 1000))),
         };
 
@@ -164,7 +161,7 @@ impl Publisher {
         let factory_out = Arc::clone(&mut self.cfg.factory);
         let peer_id_out = self.id.clone();
         let peer_id_out_2 = self.id.clone();
-        let max_packet_track = self.cfg.Router.max_packet_track;
+        let max_packet_track = self.cfg.router.max_packet_track;
         let peer_connection_out = self.pc.clone();
         let peer_connection_out_2 = self.pc.clone();
 
@@ -304,7 +301,7 @@ impl Publisher {
         for c in &*self.candidates.lock().await {
             if let Err(err) = self.pc.add_ice_candidate(c.clone()).await {}
         }
-        
+
         let answer = self.pc.create_answer(None).await?;
         self.pc.set_local_description(answer.clone()).await?;
 
@@ -404,16 +401,6 @@ impl Publisher {
         Ok(())
     }
 
-    // fn crate_relay_track(
-    //     &mut self,
-    //     track: TrackRemote,
-    //     receiver: Receiver,
-    //     rp: Peer,
-    // ) -> Result<()> {
-
-    //     Ok(())
-    // }
-
     async fn crate_relay_track(
         // &mut self,
         track: Arc<TrackRemote>,
@@ -445,7 +432,7 @@ impl Publisher {
         };
 
         let downtrack = DownTrack::new(c, receiver.clone(), peer_id, max_packet_track).await;
-        let mut receiver_mg = receiver;
+        let receiver_mg = receiver;
 
         let downtrack_arc = Arc::new(downtrack);
         let media_ssrc = track.ssrc();
@@ -471,7 +458,7 @@ impl Publisher {
                     let pc_in = rtc_peer_connection.clone();
                     Box::pin(async move {
                         let mut buf = &bytes[..];
-                        let mut pkts_result = rtcp::packet::unmarshal(&mut buf);
+                        let pkts_result = rtcp::packet::unmarshal(&mut buf);
                         let mut pkts;
 
                         match pkts_result {

@@ -1,5 +1,4 @@
 use std::sync::atomic::AtomicU64;
-use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecParameters;
 use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
@@ -12,7 +11,7 @@ use rtcp::packet::Packet as RtcpPacket;
 use webrtc::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
 
 use bytes::{Bytes, BytesMut};
-use webrtc_util::marshal::{Marshal, MarshalSize, Unmarshal};
+use webrtc_util::marshal::Unmarshal;
 
 use super::errors::Error;
 use super::errors::Result;
@@ -20,13 +19,11 @@ use super::helpers;
 use crate::buffer::buffer::AtomicBuffer;
 use rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use rtp::packet::Packet as RTCPacket;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU32, Ordering};
-// use webrtc::error::Result;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::stats::stream::Stream;
-use std::sync::Weak;
-use tokio::sync::{broadcast, mpsc, oneshot};
+use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::mpsc;
 
 use super::down_track::DownTrackType;
 use crate::buffer::helpers::VP8;
@@ -34,8 +31,6 @@ use async_trait::async_trait;
 use std::future::Future;
 use std::pin::Pin;
 use tokio::sync::Mutex;
-
-use super::down_track::DownTrackInfo;
 
 use crate::buffer::errors::Error as SfuBufferError;
 use std::any::Any;
@@ -253,12 +248,11 @@ impl Receiver for WebRTCReceiver {
         // tokio::spawn(async move { self.write_rtp(layer) });
     }
     async fn add_down_track(&self, track: Arc<DownTrack>, best_quality_first: bool) {
-        log::info!("receiver add_down_track..");
         if self.closed.load(Ordering::Relaxed) {
             return;
         }
         let mut layer = 0;
-        log::info!("receiver add_down_track1..");
+
         if self.is_simulcast {
             for (idx, v) in self.available.lock().await.iter().enumerate() {
                 if v.load(Ordering::Relaxed) {
@@ -278,18 +272,15 @@ impl Receiver for WebRTCReceiver {
             track
                 .set_track_type(DownTrackType::SimulcastDownTrack)
                 .await;
-            // track.payload =
         } else {
-            log::info!("receiver add_down_track2..");
             if self.down_track_subscribed(layer, track.clone()).await {
-                log::info!("receiver add_down_track2.1..");
                 return;
             }
-            log::info!("receiver add_down_track3..");
+
             track.set_initial_layers(0, 0);
             track.set_track_type(DownTrackType::SimpleDownTrack).await;
         }
-        log::info!("receiver add_down_track4..");
+
         self.store_down_track(layer, track).await
     }
     async fn switch_down_track(&self, track: Arc<DownTrack>, layer: usize) -> Result<()> {

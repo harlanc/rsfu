@@ -1,15 +1,15 @@
 use super::publisher::Publisher;
+use super::session::Session;
 use super::sfu::WebRTCTransportConfig;
-use super::subscriber::{self, Subscriber};
-use super::{publisher::PublisherTrack, session::Session};
+use super::subscriber::Subscriber;
 use crate::buffer::factory::AtomicFactory;
 use async_trait::async_trait;
-use bytes::Bytes;
+
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::{Mutex, MutexGuard};
+use tokio::sync::Mutex;
 use uuid::Uuid;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
@@ -19,8 +19,6 @@ use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::signaling_state::RTCSignalingState;
 
 use super::errors::Error;
-// use super::errors::Result;
-
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
@@ -231,7 +229,7 @@ impl PeerLocal {
         let config_clone = WebRTCTransportConfig {
             configuration: rtc_config_clone,
             setting: webrtc_transport_cfg.setting.clone(),
-            Router: webrtc_transport_cfg.Router.clone(),
+            router: webrtc_transport_cfg.router.clone(),
             factory: Arc::new(Mutex::new(AtomicFactory::new(1000, 1000))),
         };
 

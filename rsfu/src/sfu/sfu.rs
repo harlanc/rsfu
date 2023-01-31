@@ -49,7 +49,7 @@ struct Candidates {
 pub struct WebRTCTransportConfig {
     pub configuration: RTCConfiguration,
     pub setting: SettingEngine,
-    pub Router: RouterConfig,
+    pub router: RouterConfig,
     pub factory: Arc<Mutex<AtomicFactory>>,
 }
 #[derive(Clone, Default, Deserialize)]
@@ -76,6 +76,7 @@ pub struct WebRTCConfig {
 }
 #[derive(Clone, Default, Deserialize)]
 struct SFUConfig {
+    #[allow(dead_code)]
     #[serde(rename = "ballast")]
     ballast: i64,
     #[serde(rename = "withstats")]
@@ -103,6 +104,7 @@ pub struct SFU {
     turn: Option<TurnServer>,
     sessions: Arc<Mutex<HashMap<String, Arc<dyn Session + Send + Sync>>>>,
     data_channels: Arc<Mutex<Vec<Arc<DataChannel>>>>,
+    #[allow(dead_code)]
     with_status: bool,
 }
 
@@ -201,7 +203,7 @@ impl WebRTCTransportConfig {
                 ..Default::default()
             },
             setting: se,
-            Router: c.router.clone(),
+            router: c.router.clone(),
             factory: Arc::new(Mutex::new(AtomicFactory::new(1000, 1000))),
         };
 
@@ -218,7 +220,7 @@ impl WebRTCTransportConfig {
         }
 
         if c.sfu.with_stats {
-            w.Router.with_stats = true;
+            w.router.with_stats = true;
         }
 
         Ok(w)
@@ -229,7 +231,7 @@ impl SFU {
     pub async fn new(c: Config) -> Result<Self> {
         let w = Arc::new(WebRTCTransportConfig::new(&c).await.unwrap());
 
-        let with_status = w.Router.with_stats;
+        let with_status = w.router.with_stats;
 
         let mut sfu = SFU {
             webrtc: w,

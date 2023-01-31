@@ -2,7 +2,7 @@ use super::down_track::DownTrack;
 use crate::buffer;
 use crate::buffer::buffer::ExtPacket;
 
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, Ordering};
+use std::sync::atomic::Ordering;
 use webrtc::error::Result;
 
 use std::time::Duration;

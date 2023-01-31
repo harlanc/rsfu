@@ -1,16 +1,8 @@
-use std::clone;
-use std::fs::OpenOptions;
-
 use bytes::Bytes;
-// use rand::Rng;
-
 use rand::rngs::StdRng;
 use rand::RngCore;
 use rand::SeedableRng;
-
-// use crate::{RngCore, SeedableRng};
 use rtcp::packet::Packet as RtcpPacket;
-use serde_json::Map;
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::setting_engine::SettingEngine;
 use webrtc::api::APIBuilder;
@@ -38,31 +30,26 @@ use webrtc::sctp_transport::RTCSctpTransport;
 use webrtc::track::track_local::TrackLocal;
 use webrtc::track::track_remote::TrackRemote;
 
-use atomic::Atomic;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use thiserror::Error;
+
 use tokio::sync::mpsc;
+use tokio::sync::Mutex;
 use tokio::time::Duration;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
 use webrtc::ice_transport::ice_gatherer::RTCIceGatherOptions;
 use webrtc::ice_transport::ice_gatherer::RTCIceGatherer;
 use webrtc::ice_transport::ice_gatherer_state::RTCIceGathererState;
 use webrtc::ice_transport::ice_server::RTCIceServer;
-use webrtc::peer_connection::OnTrackHdlrFn;
-
-use tokio::sync::Mutex;
-
-use crate::buffer::errors;
 
 use super::errors::*;
 use anyhow::Result;
-//use super::errors::Result;
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+#[allow(dead_code)]
 const SIGNALER_LABEL: &'static str = "rsfu_relay_signaler";
 const SIGNALER_REQUEST_EVENT: &'static str = "rsfu_relay_request";
 
@@ -79,6 +66,7 @@ pub struct TrackMeta {
     #[serde(rename = "trackId")]
     track_id: String,
     //https://serde.rs/field-attrs.html#skip
+    #[allow(dead_code)]
     #[serde(skip_serializing, skip_deserializing)]
     codec_parameters: Option<RTCRtpCodecParameters>,
 }
@@ -109,6 +97,7 @@ pub struct Request {
     payload: Vec<u8>,
 }
 
+#[allow(dead_code)]
 pub struct Message {
     p: Option<Peer>,
     event: String,
@@ -117,10 +106,11 @@ pub struct Message {
 }
 
 impl Message {
+    #[allow(dead_code)]
     fn payload(&self) -> Vec<u8> {
         self.msg.clone()
     }
-
+    #[allow(dead_code)]
     async fn reply(self, msg: Vec<u8>) -> Result<()> {
         self.p.unwrap().reply(self.id, self.event, &msg).await
     }
@@ -137,7 +127,7 @@ pub struct PeerMeta {
     #[serde(rename = "sessionId")]
     pub session_id: String,
 }
-
+#[allow(dead_code)]
 pub struct Options {
     // RelayMiddlewareDC if set to true middleware data channels will be created and forwarded
     // to the relayed peer
@@ -173,7 +163,7 @@ pub struct Peer {
     media_engine: Arc<Mutex<MediaEngine>>,
     api: Arc<API>,
     ice_transport: Arc<RTCIceTransport>,
-
+    #[allow(dead_code)]
     peer_meta: PeerMeta,
     sctp_transport: Arc<RTCSctpTransport>,
     dtls_transport: Arc<RTCDtlsTransport>,
@@ -192,12 +182,11 @@ pub struct Peer {
     on_request_handler: Arc<Mutex<Option<OnPeerRequestFn>>>,
     on_data_channel_handler: Arc<Mutex<Option<OnPeerDataChannelFn>>>,
     on_track_handler: Arc<Mutex<Option<OnPeerTrackFn>>>,
-
+    #[allow(dead_code)]
     on_data_channel_callback_handler: Arc<Mutex<fn(&RTCDataChannel)>>,
 }
-use std::rc::Rc;
 
-fn on_data_channel_callback(channel: &RTCDataChannel) {}
+fn on_data_channel_callback(_channel: &RTCDataChannel) {}
 impl Peer {
     pub(crate) fn new(meta: PeerMeta, conf: PeerConfig) -> Result<Self> {
         let ice_options = RTCIceGatherOptions {
@@ -251,26 +240,14 @@ impl Peer {
 
         Ok(p)
     }
+
+    #[allow(dead_code)]
     async fn init(&mut self, meta: PeerMeta, conf: PeerConfig) {
-        //let mut data_channel: Arc<RTCDataChannel> = Arc::new(RTCDataChannel::default());
-
         let on_ready_handler = Arc::clone(&self.on_ready_handler);
-
-        // let mut signaling_dc = Arc::clone(&self.signaling_dc);
 
         self.sctp_transport
             .on_data_channel(Box::new(move |d: Arc<RTCDataChannel>| {
                 if d.label() == SIGNALER_LABEL {
-                    // let dc = signaling_dc.lock().await;
-
-                    // let val = Arc::try_unwrap(d);
-
-                    // let d2 = Arc::clone(&d);
-
-                    // signaling_dc = Arc::new(Mutex::new(val));
-
-                    // self.signaling_dc = Arc::clone(&d);
-
                     let on_ready_handler2 = Arc::clone(&on_ready_handler);
                     Box::pin(async move {
                         d.on_open(Box::new(move || {
@@ -291,8 +268,6 @@ impl Peer {
                     Box::pin(async {})
                 }
             }));
-
-        //  Ok(p)
     }
 
     async fn handle_request(&mut self, msg: DataChannelMessage) -> Result<()> {
@@ -334,7 +309,6 @@ impl Peer {
     }
     // Offer is used for establish the connection of the local relay Peer
     // with the remote relay Peer.
-    //
     // If connection is successful OnReady handler will be called
     async fn offer(
         &mut self,

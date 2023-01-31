@@ -96,7 +96,7 @@ impl SessionLocal {
 
         tokio::spawn(async move {
             if let Err(err) = session_local_in
-                .audio_level_observer(config.Router.audio_level_interval)
+                .audio_level_observer(config.router.audio_level_interval)
                 .await
             {
                 log::error!("session_local err:{}", err);
@@ -105,7 +105,7 @@ impl SessionLocal {
 
         session_local
     }
-
+    
     async fn get_relay_peer(&self, peer_id: String) -> Option<Arc<RelayPeer>> {
         let relay_peers = self.relay_peers.lock().await;
         if let Some(relay_peer) = relay_peers.get(&peer_id) {

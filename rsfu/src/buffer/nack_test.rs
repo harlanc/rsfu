@@ -1,7 +1,3 @@
-use std::collections::hash_set;
-
-use std::collections::btree_set;
-
 #[cfg(test)]
 mod tests {
     use std::collections::BinaryHeap;
@@ -54,22 +50,34 @@ mod tests {
     #[test]
     fn test_binary_heap() {
         let mut heap = BinaryHeap::new();
-        heap.push(State{cost: 2, position: 3});
-        heap.push(State{cost: 3, position: 3});
-        heap.push(State{cost: 1, position: 3});
-        heap.push(State{cost: 5, position: 3});
-        heap.push(State{cost: 4, position: 3});
+        heap.push(State {
+            cost: 2,
+            position: 3,
+        });
+        heap.push(State {
+            cost: 3,
+            position: 3,
+        });
+        heap.push(State {
+            cost: 1,
+            position: 3,
+        });
+        heap.push(State {
+            cost: 5,
+            position: 3,
+        });
+        heap.push(State {
+            cost: 4,
+            position: 3,
+        });
 
-        loop{
-            if heap.is_empty(){
+        loop {
+            if heap.is_empty() {
                 break;
             }
 
             let v = heap.pop().unwrap();
             println!("{:?}", v.cost);
-
         }
-
-       
     }
 }

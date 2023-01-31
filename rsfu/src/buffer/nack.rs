@@ -1,7 +1,6 @@
 use rtcp::transport_feedbacks::transport_layer_nack::NackPair;
 
 pub const MAX_NACK_TIMES: u8 = 3;
-
 #[derive(Debug, Eq, PartialEq, Default, Clone)]
 pub struct Nack {
     seq_number: u32,
@@ -14,7 +13,6 @@ impl Nack {
     }
 }
 
-use rtcp::receiver_report::ReceiverReport;
 #[derive(Debug, Eq, PartialEq, Default, Clone)]
 pub struct NackQueue {
     nacks: Vec<Nack>,
@@ -77,10 +75,9 @@ impl NackQueue {
             lost_packets: 0,
         };
         let mut nps: Vec<NackPair> = Vec::new();
-
         let mut ask_key_frame: bool = false;
-
         let mut idx = 0 as usize;
+
         while idx < self.nacks.len() {
             let v = &mut self.nacks[idx];
 
@@ -146,8 +143,8 @@ mod tests {
         assert_eq!(4, nack_queue.nacks[2].seq_number);
         assert_eq!(36, nack_queue.nacks[3].seq_number);
 
-        for i in 1..1{
-            println!("number:{}",i);
+        for i in 1..1 {
+            println!("number:{}", i);
         }
     }
 
@@ -183,7 +180,7 @@ mod tests {
 
         let np = NackPair {
             packet_id: 1,
-            lost_packets: 13,//0000 0000 0000 1101
+            lost_packets: 13, //0000 0000 0000 1101
         };
 
         assert_eq!(pairs, Some(vec![np]));
@@ -201,11 +198,11 @@ mod tests {
 
         let np = NackPair {
             packet_id: 1,
-            lost_packets: 13,//1101
+            lost_packets: 13, //1101
         };
         let np2 = NackPair {
             packet_id: 20,
-            lost_packets: 74,//1001010
+            lost_packets: 74, //1001010
         };
 
         assert_eq!(pairs, Some(vec![np, np2]));

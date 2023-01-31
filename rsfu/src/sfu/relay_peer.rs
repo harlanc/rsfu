@@ -1,14 +1,13 @@
-use super::router::Router;
 use super::session::Session;
 use crate::relay::relay::Peer;
 
 use super::data_channel::DataChannel;
 use super::publisher::PublisherTrack;
 use super::sfu::WebRTCTransportConfig;
-use tokio::sync::Mutex;
 
 use std::sync::Arc;
 
+#[allow(dead_code)]
 pub struct RelayPeer {
     peer: Option<Peer>,
     session: Arc<dyn Session + Send + Sync>,

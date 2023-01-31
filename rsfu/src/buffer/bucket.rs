@@ -1,9 +1,6 @@
-use std::io::Write;
-
-use crate::buffer::errors::*;
-
 use super::errors::Result;
-use byteorder::{BigEndian, ByteOrder, WriteBytesExt};
+use crate::buffer::errors::*;
+use byteorder::{BigEndian, ByteOrder};
 
 const MAX_PACKET_SIZE: usize = 1500;
 
@@ -160,24 +157,17 @@ impl Bucket {
 
 #[cfg(test)]
 mod tests {
-    use byteorder::{BigEndian, ByteOrder, WriteBytesExt};
 
     #[test]
     fn test_bigendian() {
         let mut datas = vec![0; 30];
-
         let mut src = vec![2, 3, 4];
-
         let length = src.len();
-
         datas[2..length + 2].copy_from_slice(&src);
 
-        //    let rv = BigEndian::read_u16(&datas[1..]);
-
+        //let rv = BigEndian::read_u16(&datas[1..]);
         //datas.write_u16::<BigEndian>(14);
-
         // BigEndian::write_u16(&mut datas[2 as usize..], 23 as u16);
-
         // print!("data is :{:02x}\n", rv);
 
         for i in datas {

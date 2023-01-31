@@ -1,12 +1,9 @@
 use crate::sfu::data_channel::MessageProcessor;
 use crate::sfu::data_channel::ProcessArgs;
 use crate::sfu::data_channel::ProcessFunc;
-use crate::sfu::helpers::set_vp8_temporal_layer;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::sync::Mutex;
-use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
-use webrtc::track::track_local::TrackLocal;
 
 const HIGH_VALUE: &'static str = "high";
 const MEDIA_VALUE: &'static str = "medium";

@@ -1,10 +1,6 @@
-use std::borrow::BorrowMut;
-use std::time::{SystemTime, UNIX_EPOCH};
-
-use std::sync::Arc;
-
 use std::collections::HashMap;
-
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
 const IGNORE_RETRANSMISSION: u8 = 100;
@@ -95,26 +91,24 @@ impl AtomicSequencer {
             sequencer.init = true;
         }
 
-        let mut step = 0;
         if head {
             let inc = off_sn - sequencer.head_sn;
 
-            for i in 1..inc {
+            for _i in 1..inc {
                 sequencer.step += 1;
                 if sequencer.step >= sequencer.max {
                     sequencer.step = 0;
                 }
             }
-            step = sequencer.step;
             sequencer.head_sn = off_sn;
         } else {
-            step = sequencer.step - (sequencer.head_sn - off_sn) as i32;
+            let step = sequencer.step - (sequencer.head_sn - off_sn) as i32;
             if step < 0 {
                 if step * -1 >= sequencer.max {
                     return None;
                 }
 
-                step = step + sequencer.max;
+                //step = step + sequencer.max;
             }
         }
 
@@ -137,17 +131,12 @@ impl AtomicSequencer {
             sequencer.step = 0;
         }
 
-
-        if let Some(data) = sequencer.seq.get(&sequencer.step)
-        {
+        if let Some(data) = sequencer.seq.get(&sequencer.step) {
             Some(data.clone())
-        }else
-        {
-                    log::info!("sequencer step: {}",sequencer.step);
+        } else {
+            log::info!("sequencer step: {}", sequencer.step);
             None
         }
-
-       // Some(sequencer.seq.get(&sequencer.step).unwrap().clone())
     }
 
     pub async fn get_seq_no_pairs(&self, seq_nos: &[u16]) -> Vec<PacketMeta> {

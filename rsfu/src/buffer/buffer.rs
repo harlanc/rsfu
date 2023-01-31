@@ -13,30 +13,23 @@ use std::time::Instant;
 use webrtc::rtp_transceiver as webrtc_rtp;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpParameters;
 use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
-use webrtc_util::{Marshal, MarshalSize, Unmarshal};
+use webrtc_util::Unmarshal;
 
 use super::errors::Result;
 use async_trait::async_trait;
-use std::borrow::BorrowMut;
+
 use std::collections::VecDeque;
 use std::future::Future;
-use std::isize::MAX;
+
+use super::buffer_io::BufferIO;
+use super::helpers::VP8;
+use crate::buffer::bucket;
+use crate::{buffer::bucket::Bucket, buffer::nack::NackQueue};
+use byteorder::{BigEndian, ByteOrder};
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use tokio::time::{sleep, Duration};
-
-use super::helpers::VP8;
-
-use byteorder::{BigEndian, ByteOrder, WriteBytesExt};
-use bytes::{BufMut, BytesMut};
-
-use super::buffer_io::BufferIO;
-use crate::buffer::bucket;
-use crate::{buffer::bucket::Bucket, buffer::nack::NackQueue};
 
 const MAX_SEQUENCE_NUMBER: u32 = 1 << 16;
 const REPORT_DELTA: f64 = 1e9;
@@ -264,22 +257,22 @@ impl AtomicBuffer {
         *handler = Some(f);
     }
 
-    
-
-
-
     pub async fn calc(&self, pkt: &[u8], arrival_time: i64) {
         // println!("calc 1....");
         let codc_type = self.buffer.lock().await.codec_type; //= RTPCodecType::Video;
         if codc_type == RTPCodecType::Video {
-           // log::info!("calc 0");
+            // log::info!("calc 0");
         }
         let buffer = &mut self.buffer.lock().await;
-        
-        let sn = BigEndian::read_u16(&pkt[2..4]);  if codc_type == RTPCodecType::Video {
-        log::info!("calc 2....: sn: {}",sn);}
-        let distance = bucket::distance(sn, buffer.max_seq_no);  if codc_type == RTPCodecType::Video {
-        log::info!("calc 3....: distance: {}",distance);}
+
+        let sn = BigEndian::read_u16(&pkt[2..4]);
+        if codc_type == RTPCodecType::Video {
+            log::info!("calc 2....: sn: {}", sn);
+        }
+        let distance = bucket::distance(sn, buffer.max_seq_no);
+        if codc_type == RTPCodecType::Video {
+            log::info!("calc 3....: distance: {}", distance);
+        }
         if buffer.stats.packet_count == 0 {
             buffer.base_sn = sn;
             buffer.max_seq_no = sn;
@@ -337,8 +330,10 @@ impl AtomicBuffer {
                         println!("calc error 0....");
                         return;
                     }
-                    Ok(p) => {  if codc_type == RTPCodecType::Video {
-                        log::info!("calc packet size: {}",data.len());}
+                    Ok(p) => {
+                        if codc_type == RTPCodecType::Video {
+                            log::info!("calc packet size: {}", data.len());
+                        }
                         packet = p;
                     }
                 },
@@ -369,7 +364,7 @@ impl AtomicBuffer {
             "video/vp8" => {
                 let mut vp8_packet = helpers::VP8::default();
                 if let Err(e) = vp8_packet.unmarshal(&packet.payload[..]) {
-                    println!("calc error 3....: {}",e);
+                    println!("calc error 3....: {}", e);
                     return;
                 }
                 ep.key_frame = vp8_packet.is_key_frame;
@@ -449,7 +444,7 @@ impl AtomicBuffer {
             }
         }
         if codc_type == RTPCodecType::Video {
-           // log::info!("calc 5");
+            // log::info!("calc 5");
         }
         let diff = arrival_time - buffer.last_report;
 
@@ -509,7 +504,7 @@ impl AtomicBuffer {
 
         pkts
     }
-
+    #[allow(dead_code)]
     async fn build_remb_packet(&self) -> ReceiverEstimatedMaximumBitrate {
         let mut buffer = self.buffer.lock().await;
         let mut br = buffer.bitrate;
@@ -538,7 +533,7 @@ impl AtomicBuffer {
             ..Default::default()
         };
     }
-
+    #[allow(dead_code)]
     async fn build_reception_report(&self) -> ReceptionReport {
         let mut buffer = self.buffer.lock().await;
 
@@ -595,7 +590,7 @@ impl AtomicBuffer {
         buffer.last_srntp_time = ntp_time;
         buffer.last_sr_recv = Instant::now().elapsed().subsec_nanos() as i64;
     }
-
+    #[allow(dead_code)]
     async fn get_rtcp(&mut self) -> Vec<Box<dyn RtcpPacket>> {
         let mut buffer = self.buffer.lock().await;
 
@@ -648,11 +643,11 @@ impl AtomicBuffer {
         let mut handler = buffer.on_audio_level_handler.lock().await;
         *handler = Some(f);
     }
-
+    #[allow(dead_code)]
     async fn get_media_ssrc(&self) -> u32 {
         self.buffer.lock().await.media_ssrc
     }
-
+    #[allow(dead_code)]
     async fn get_clock_rate(&self) -> u32 {
         self.buffer.lock().await.clock_rate
     }
@@ -669,7 +664,7 @@ impl AtomicBuffer {
     pub async fn get_status(&self) -> Stats {
         self.buffer.lock().await.stats.clone()
     }
-
+    #[allow(dead_code)]
     async fn get_latest_timestamp(&self) -> (u32, i64) {
         let buffer = self.buffer.lock().await;
         (buffer.latest_timestamp, buffer.latest_timestamp_time)
@@ -680,10 +675,9 @@ impl AtomicBuffer {
 impl BufferIO for AtomicBuffer {
     // Write adds a RTP Packet, out of order, new packet may be arrived later
     async fn write(&self, pkt: &[u8]) -> Result<u32> {
-        //println!("buffer write begin....");
         {
             let mut buffer = self.buffer.lock().await;
-            //println!("buffer write begin 1....");
+
             if !buffer.bound {
                 buffer.pending_packets.push(PendingPackets {
                     arrival_time: Instant::now().elapsed().subsec_nanos() as u64,
@@ -694,7 +688,6 @@ impl BufferIO for AtomicBuffer {
             }
         }
 
-        //println!("buffer write begin 2....");
         self.calc(pkt, Instant::now().elapsed().subsec_nanos() as i64)
             .await;
 

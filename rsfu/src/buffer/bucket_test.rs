@@ -1,16 +1,9 @@
 #[cfg(test)]
 mod tests {
-
-    use crate::buffer::nack;
+    use crate::buffer::bucket::Bucket;
     use rtp::header::Header;
     use rtp::packet::Packet;
-
-    use bytes::{Buf, BufMut, Bytes, BytesMut};
-    use rtcp::transport_feedbacks::transport_layer_nack::NackPair;
-
-    use crate::buffer::bucket::Bucket;
-
-    use webrtc_util::{Marshal, MarshalSize, Unmarshal};
+    use webrtc_util::{Marshal, Unmarshal};
 
     fn new_packet(seq_number: u16) -> Packet {
         return Packet {
@@ -34,17 +27,15 @@ mod tests {
 
         return packets;
     }
-
-    fn marshal_to(buf: &mut [u8]) {
-        let aa = buf.remaining_mut();
-        let bb = aa;
-    }
+    // #[allow(dead_code)]
+    // fn marshal_to(buf: &mut [u8]) {
+    //     // let aa = buf.remaining_mut();
+    //     // let bb = aa;
+    // }
 
     #[test]
     fn test_queue() {
         let packets = init();
-
-        // let buf = vec![0u8; 25000];
 
         let mut bucket = Bucket::new(25000);
         let mut raw = vec![0u8; 25000];
@@ -139,7 +130,7 @@ mod tests {
         assert_eq!(p.unwrap().header.sequence_number, 65535);
     }
 
-    use byteorder::{BigEndian, ByteOrder, WriteBytesExt};
+    use byteorder::{BigEndian, ByteOrder};
 
     #[test]
     fn test_bigend_bytes() {
@@ -149,12 +140,5 @@ mod tests {
 
         print!("value:{}\n", sn);
         print!("value2:{}\n", 4 << 8 | 5);
-    }
-
-    #[test]
-    fn test_for() {
-        for i in 1..4 {
-            println!("heh");
-        }
     }
 }

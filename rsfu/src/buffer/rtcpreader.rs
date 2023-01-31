@@ -1,10 +1,8 @@
-use super::buffer_io::BufferIO;
-use crate::buffer::errors::*;
 use super::errors::Result;
-use atomic::Atomic;
+use crate::buffer::errors::*;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 

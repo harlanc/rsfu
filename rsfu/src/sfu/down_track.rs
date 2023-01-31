@@ -1,46 +1,41 @@
 // DownTrackType determines the type of track
 //type DownTrackType =  u16;
-
 use super::errors::Error;
 use super::errors::Result;
-use super::sequencer::{self, AtomicSequencer};
-use super::simulcast::SimulcastTrackHelpers;
-use atomic::Atomic;
-use rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
-use rtp::extension::audio_level_extension::AudioLevelExtension;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU32, Ordering};
-use webrtc::error::Error as WEBRTCError;
-use webrtc::error::Result as RTCResult;
+
 use super::helpers;
 use super::receiver::Receiver;
-use super::sequencer::PacketMeta;
+use super::simulcast::SimulcastTrackHelpers;
+use rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+use webrtc::error::Error as WEBRTCError;
+use webrtc::error::Result as RTCResult;
+
 use bytes::Bytes;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Once;
 use std::time::SystemTime;
-use tokio::sync::{Mutex, MutexGuard};
+use tokio::sync::Mutex;
 use webrtc::rtcp::sender_report::SenderReport;
 use webrtc::rtcp::source_description::SdesType;
 use webrtc::rtcp::source_description::SourceDescriptionChunk;
 use webrtc::rtcp::source_description::SourceDescriptionItem;
-use webrtc::rtp::packet::Packet as RTPPacket;
+
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::rtp_transceiver::RTCRtpTransceiver;
 
 use async_trait::async_trait;
-use tokio::time::{sleep, Duration};
+use tokio::time::Duration;
 
 use crate::buffer::buffer::ExtPacket;
-use crate::buffer::factory::AtomicFactory;
 
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecParameters;
 use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
-use webrtc::track::track_local::{TrackLocal, TrackLocalContext, TrackLocalWriter};
+use webrtc::track::track_local::{TrackLocal, TrackLocalContext};
 
 use super::down_track_local::DownTrackLocal;
-use rtcp::packet::unmarshal;
 use rtcp::packet::Packet as RtcpPacket;
 use std::any::Any;
 
@@ -66,43 +61,27 @@ pub struct DownTrackInfo {
 }
 
 pub struct DownTrack {
-    //pub id: String,
     peer_id: String,
-    // pub bound: AtomicBool,
-    // mime: Mutex<String>,
-    // ssrc: Mutex<u32>,
-    // stream_id: String,
-    // max_track: i32,
-    // payload_type: Mutex<u8>,
-    // sequencer: Arc<Mutex<AtomicSequencer>>,
     track_type: Mutex<DownTrackType>,
-    // buffer_factory: Mutex<AtomicFactory>,
     pub payload: Vec<u8>,
 
     current_spatial_layer: AtomicI32,
     target_spatial_layer: AtomicI32,
     pub temporal_layer: AtomicI32,
 
-    // enabled: AtomicBool,
-    // re_sync: AtomicBool,
     sn_offset: Mutex<u16>,
     ts_offset: Mutex<u32>,
-    //last_ssrc: AtomicU32,
+
     last_sn: Mutex<u16>,
     last_ts: Mutex<u32>,
 
     pub simulcast: Arc<Mutex<SimulcastTrackHelpers>>,
     max_spatial_layer: AtomicI32,
     max_temporal_layer: AtomicI32,
-
-    // codec: RTCRtpCodecCapability,
-    // receiver: Arc<Mutex<dyn Receiver + Send + Sync>>,
     pub transceiver: Option<Arc<RTCRtpTransceiver>>,
-    // write_stream: Mutex<Option<Arc<dyn TrackLocalWriter + Send + Sync>>>, //TrackLocalWriter,
     pub on_close_handler: Arc<Mutex<Option<OnCloseFn>>>,
-    //on_bind_handler: Arc<Mutex<Option<OnBindFn>>>,
-    close_once: Once,
 
+    close_once: Once,
     octet_count: AtomicU32,
     packet_count: AtomicU32,
     max_packet_ts: u32,
@@ -115,10 +94,6 @@ impl PartialEq for DownTrack {
         return (self.peer_id == other.peer_id)
             && (self.down_track_local == other.down_track_local);
     }
-
-    // fn ne(&self, other: &Self) -> bool {
-    //     true
-    // }
 }
 
 impl DownTrack {
@@ -128,45 +103,23 @@ impl DownTrack {
         peer_id: String,
         mt: i32,
     ) -> Self {
-        // let receiver = r.lock().await;
         Self {
-            // codec: c,
-            // id: receiver.track_id(),
             peer_id: peer_id,
-            // bound: AtomicBool::new(false),
-            // mime: Mutex::new(String::from("")),
-            // ssrc: Mutex::new(0),
-            // stream_id: receiver.stream_id(),
-            // max_track: mt,
-            // payload_type: Mutex::new(0),
-            // sequencer: Arc::new(Mutex::new(AtomicSequencer::new(0))),
             track_type: Mutex::new(DownTrackType::SimpleDownTrack),
-            //buffer_factory: Mutex::new(AtomicFactory::new(1000, 1000)),
             payload: Vec::new(),
-
             current_spatial_layer: AtomicI32::new(0),
             target_spatial_layer: AtomicI32::new(0),
             temporal_layer: AtomicI32::new(0),
-
-            // enabled: AtomicBool::new(false),
-            // re_sync: AtomicBool::new(false),
             sn_offset: Mutex::new(0),
             ts_offset: Mutex::new(0),
-            //last_ssrc: AtomicU32::new(0),
             last_sn: Mutex::new(0),
             last_ts: Mutex::new(0),
-
             simulcast: Arc::new(Mutex::new(SimulcastTrackHelpers::new())),
             max_spatial_layer: AtomicI32::new(0),
             max_temporal_layer: AtomicI32::new(0),
-
-            //receiver: r.clone(),
             transceiver: None,
-            //write_stream: Mutex::new(None),
             on_close_handler: Arc::default(),
-            //on_bind_handler: Arc::default(),
             close_once: Once::new(),
-
             octet_count: AtomicU32::new(0),
             packet_count: AtomicU32::new(0),
             max_packet_ts: 0,
@@ -258,23 +211,19 @@ impl DownTrack {
 
     pub async fn write_rtp(&self, pkt: ExtPacket, layer: usize) -> Result<()> {
         let cur_payload_type = self.down_track_local.payload_type.lock().await.clone();
-        log::info!("write_rtp...:{}", cur_payload_type);
+
         if !self.down_track_local.enabled.load(Ordering::Relaxed) {
-            // log::info!("write_rtp 0.1...");
             return Ok(());
         }
         if !self.bound() {
-            log::info!("write_rtp 0.2...");
             return Ok(());
         }
-        //log::info!("write_rtp 0...");
+
         match *self.track_type.lock().await {
             DownTrackType::SimpleDownTrack => {
-                log::info!("write_rtp 1...:{}", cur_payload_type);
                 return self.write_simple_rtp(pkt).await;
             }
             DownTrackType::SimulcastDownTrack => {
-                log::info!("write_rtp 2...");
                 return self.write_simulcast_rtp(pkt, layer as i32).await;
             }
         }
@@ -524,9 +473,8 @@ impl DownTrack {
     }
 
     async fn write_simple_rtp(&self, packet: ExtPacket) -> Result<()> {
-      
         let cur_payload_type = self.down_track_local.payload_type.lock().await.clone();
-          if cur_payload_type == 96{
+        if cur_payload_type == 96 {
             log::info!("write_simple_rtp PLI ");
         }
         //log::info!("write_simple_rtp payload type 0: {}", cur_payload_type);
@@ -541,7 +489,11 @@ impl DownTrack {
                     if !ext_packet.key_frame {
                         let receiver = &self.down_track_local.receiver;
                         //log::info!("write_simple_rtp payload type 0.4: {}", cur_payload_type);
-                        log::info!("send PLI ssrc:{}, media_ssrc:{}",ssrc,ext_packet.packet.header.ssrc);
+                        log::info!(
+                            "send PLI ssrc:{}, media_ssrc:{}",
+                            ssrc,
+                            ext_packet.packet.header.ssrc
+                        );
                         receiver.send_rtcp(vec![Box::new(PictureLossIndication {
                             sender_ssrc: ssrc,
                             media_ssrc: ext_packet.packet.header.ssrc,
@@ -555,7 +507,7 @@ impl DownTrack {
             }
             //log::info!("write_simple_rtp payload type 0.6: {}", cur_payload_type);
             if *self.last_sn.lock().await != 0 {
-               // log::info!("write_simple_rtp payload type 0.7: {}", cur_payload_type);
+                // log::info!("write_simple_rtp payload type 0.7: {}", cur_payload_type);
                 let mut sn_offset = self.sn_offset.lock().await;
                 *sn_offset =
                     ext_packet.packet.header.sequence_number - *self.last_sn.lock().await - 1;
@@ -571,10 +523,10 @@ impl DownTrack {
                 .re_sync
                 .store(false, Ordering::Relaxed);
         }
-        if cur_payload_type == 96{
+        if cur_payload_type == 96 {
             log::info!("get PLI 2");
         }
-       // log::info!("write_simple_rtp payload type 1: {}", cur_payload_type);
+        // log::info!("write_simple_rtp payload type 1: {}", cur_payload_type);
         self.update_stats(ext_packet.packet.payload.len() as u32);
 
         let new_sn = ext_packet.packet.header.sequence_number - *self.sn_offset.lock().await;

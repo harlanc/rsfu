@@ -8,6 +8,7 @@ pub const FULL_RESOLUTION: &'static str = "f";
 pub struct SimulcastConfig {
     #[serde(rename = "bestqualityfirst")]
     pub best_quality_first: bool,
+    #[allow(dead_code)]
     #[serde(rename = "enabletemporallayer")]
     enable_temporal_layer: bool,
 }
@@ -15,6 +16,7 @@ pub struct SimulcastConfig {
 pub struct SimulcastTrackHelpers {
     pub switch_delay: SystemTime,
     pub temporal_supported: bool,
+    #[allow(dead_code)]
     temporal_enabled: bool,
     pub l_ts_calc: i64,
 

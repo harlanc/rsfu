@@ -1,43 +1,26 @@
-// DownTrackType determines the type of track
-//type DownTrackType =  u16;
-
-use super::sequencer::{self, AtomicSequencer};
-use super::simulcast::SimulcastTrackHelpers;
-use atomic::Atomic;
-use rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
-use rtp::extension::audio_level_extension::AudioLevelExtension;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU32, Ordering};
-use webrtc::error::{Error as WEBRTCError, Result};
+use super::sequencer::AtomicSequencer;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use webrtc::error::Result;
 
 use super::helpers;
 use super::receiver::Receiver;
 use super::sequencer::PacketMeta;
-use bytes::Bytes;
+
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Once;
-use std::time::SystemTime;
-use tokio::sync::{Mutex, MutexGuard};
-use webrtc::rtcp::sender_report::SenderReport;
-use webrtc::rtcp::source_description::SdesType;
-use webrtc::rtcp::source_description::SourceDescriptionChunk;
-use webrtc::rtcp::source_description::SourceDescriptionItem;
-use webrtc::rtp::packet::Packet as RTPPacket;
-use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
-use webrtc::rtp_transceiver::RTCRtpTransceiver;
 
 use async_trait::async_trait;
-use tokio::time::{sleep, Duration};
+use tokio::sync::Mutex;
+use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 
-use crate::buffer::buffer::ExtPacket;
 use crate::buffer::factory::AtomicFactory;
 
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecParameters;
 use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
 use webrtc::track::track_local::{TrackLocal, TrackLocalContext, TrackLocalWriter};
 
-use rtcp::packet::unmarshal;
 use rtcp::packet::Packet as RtcpPacket;
 use std::any::Any;
 
@@ -64,7 +47,6 @@ pub struct DownTrackInfo {
 
 pub struct DownTrackLocal {
     pub id: String,
-    // peer_id: String,
     pub bound: AtomicBool,
     pub mime: Mutex<String>,
     pub ssrc: Mutex<u32>,
@@ -72,29 +54,14 @@ pub struct DownTrackLocal {
     max_track: i32,
     pub payload_type: Mutex<u8>,
     pub sequencer: Arc<Mutex<AtomicSequencer>>,
-    // track_type: Mutex<DownTrackType>,
     buffer_factory: Mutex<AtomicFactory>,
-    // pub payload: Vec<u8>,
-
-    // current_spatial_layer: AtomicI32,
-    // target_spatial_layer: AtomicI32,
-    // pub temporal_layer: AtomicI32,
     pub enabled: AtomicBool,
     pub re_sync: AtomicBool,
-    // sn_offset: Mutex<u16>,
-    // ts_offset: Mutex<u32>,
     pub last_ssrc: AtomicU32,
-    // last_sn: Mutex<u16>,
-    // last_ts: Mutex<u32>,
-
-    // pub simulcast: Arc<Mutex<SimulcastTrackHelpers>>,
-    // max_spatial_layer: AtomicI32,
-    // max_temporal_layer: AtomicI32,
     pub codec: RTCRtpCodecCapability,
     pub receiver: Arc<dyn Receiver + Send + Sync>,
-    // pub transceiver: Option<Arc<RTCRtpTransceiver>>,
     pub write_stream: Mutex<Option<Arc<dyn TrackLocalWriter + Send + Sync>>>, //TrackLocalWriter,
-    // pub on_close_handler: Arc<Mutex<Option<OnCloseFn>>>,
+
     on_bind_handler: Arc<Mutex<Option<OnBindFn>>>,
     close_once: Once,
 
@@ -182,7 +149,7 @@ impl DownTrackLocal {
 
         let mut buf = &data[..];
 
-        let mut pkts_result = rtcp::packet::unmarshal(&mut buf);
+        let pkts_result = rtcp::packet::unmarshal(&mut buf);
         let mut pkts;
 
         match pkts_result {

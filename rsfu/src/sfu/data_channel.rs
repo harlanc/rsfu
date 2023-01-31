@@ -1,23 +1,17 @@
-use super::peer::Peer;
+use super::down_track::DownTrack;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Mutex;
-use webrtc::data_channel::data_channel_message::DataChannelMessage;
-
 use tokio::sync::Mutex as TokioMutex;
-
-use super::down_track::DownTrack;
+use webrtc::data_channel::data_channel_message::DataChannelMessage;
 use webrtc::data_channel::RTCDataChannel;
-
-use std::rc::Rc;
 
 pub type MessageProcessorFunc = Box<
     dyn (FnMut(ProcessArgs) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>) + Send + Sync,
 >;
 
 #[derive(Default, Clone)]
-
 pub struct ProcessArgs {
     pub down_tracks: Vec<Arc<TokioMutex<DownTrack>>>,
     pub message: DataChannelMessage,
