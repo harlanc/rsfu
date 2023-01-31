@@ -53,7 +53,9 @@ pub struct ProcessFunc {
 }
 
 pub struct ChainHandler {
+    #[allow(dead_code)]
     middlewares: Arc<Middlewares>,
+    #[allow(dead_code)]
     last: Arc<Mutex<dyn MessageProcessor + Send>>,
     current: Arc<Mutex<dyn MessageProcessor + Send>>,
 }
@@ -65,13 +67,14 @@ impl DataChannel {
             ..Default::default()
         }
     }
+    #[allow(dead_code)]
     fn use_middleware(
         &mut self,
         f: fn(Arc<Mutex<dyn MessageProcessor + Send>>) -> Arc<Mutex<dyn MessageProcessor + Send>>,
     ) {
         self.middlewares.lock().unwrap().push(f);
     }
-
+    #[allow(dead_code)]
     fn on_message(&mut self, f: fn(args: ProcessArgs)) {
         self.on_message = Some(f);
 

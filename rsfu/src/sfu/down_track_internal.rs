@@ -1,22 +1,18 @@
-use super::sequencer::AtomicSequencer;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use webrtc::error::Result;
-
 use super::helpers;
 use super::receiver::Receiver;
+use super::sequencer::AtomicSequencer;
 use super::sequencer::PacketMeta;
-
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::sync::Once;
+use webrtc::error::Result;
 
+use crate::buffer::factory::AtomicFactory;
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
-
-use crate::buffer::factory::AtomicFactory;
-
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecParameters;
 use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
 use webrtc::track::track_local::{TrackLocal, TrackLocalContext, TrackLocalWriter};
@@ -45,7 +41,7 @@ pub struct DownTrackInfo {
     pub payload: Vec<u8>,
 }
 
-pub struct DownTrackLocal {
+pub struct DownTrackInternal {
     pub id: String,
     pub bound: AtomicBool,
     pub mime: Mutex<String>,
@@ -61,16 +57,19 @@ pub struct DownTrackLocal {
     pub codec: RTCRtpCodecCapability,
     pub receiver: Arc<dyn Receiver + Send + Sync>,
     pub write_stream: Mutex<Option<Arc<dyn TrackLocalWriter + Send + Sync>>>, //TrackLocalWriter,
-
     on_bind_handler: Arc<Mutex<Option<OnBindFn>>>,
-    close_once: Once,
 
+    #[allow(dead_code)]
+    close_once: Once,
+    #[allow(dead_code)]
     octet_count: AtomicU32,
+    #[allow(dead_code)]
     packet_count: AtomicU32,
+    #[allow(dead_code)]
     max_packet_ts: u32,
 }
 
-impl PartialEq for DownTrackLocal {
+impl PartialEq for DownTrackInternal {
     fn eq(&self, other: &Self) -> bool {
         return (self.stream_id == other.stream_id) && (self.id == other.id);
     }
@@ -80,17 +79,15 @@ impl PartialEq for DownTrackLocal {
     // }
 }
 
-impl DownTrackLocal {
+impl DownTrackInternal {
     pub(super) async fn new(
         c: RTCRtpCodecCapability,
         r: Arc<dyn Receiver + Send + Sync>,
         mt: i32,
     ) -> Self {
-        //let receiver = r.lock().await;
         Self {
             codec: c,
             id: r.track_id(),
-            // peer_id: peer_id,
             bound: AtomicBool::new(false),
             mime: Mutex::new(String::from("")),
             ssrc: Mutex::new(0),
@@ -98,31 +95,14 @@ impl DownTrackLocal {
             max_track: mt,
             payload_type: Mutex::new(0),
             sequencer: Arc::new(Mutex::new(AtomicSequencer::new(0))),
-            // track_type: Mutex::new(DownTrackType::SimpleDownTrack),
             buffer_factory: Mutex::new(AtomicFactory::new(1000, 1000)),
-            // payload: Vec::new(),
-
-            // current_spatial_layer: AtomicI32::new(0),
-            // target_spatial_layer: AtomicI32::new(0),
-            // temporal_layer: AtomicI32::new(0),
             enabled: AtomicBool::new(false),
             re_sync: AtomicBool::new(false),
-            // sn_offset: Mutex::new(0),
-            // ts_offset: Mutex::new(0),
             last_ssrc: AtomicU32::new(0),
-            // last_sn: Mutex::new(0),
-            // last_ts: Mutex::new(0),
-
-            // simulcast: Arc::new(Mutex::new(SimulcastTrackHelpers::new())),
-            // max_spatial_layer: AtomicI32::new(0),
-            // max_temporal_layer: AtomicI32::new(0),
             receiver: r.clone(),
-            // transceiver: None,
             write_stream: Mutex::new(None),
-            // on_close_handler: Arc::default(),
             on_bind_handler: Arc::default(),
             close_once: Once::new(),
-
             octet_count: AtomicU32::new(0),
             packet_count: AtomicU32::new(0),
             max_packet_ts: 0,
@@ -142,7 +122,6 @@ impl DownTrackLocal {
         sequencer: Arc<Mutex<AtomicSequencer>>,
         receiver: Arc<dyn Receiver + Send + Sync>,
     ) {
-        // let enabled = self.enabled.load(Ordering::Relaxed);
         if !enabled {
             return;
         }
@@ -225,15 +204,9 @@ impl DownTrackLocal {
 
                                  let seq_numbers = pair.packet_list();
                      let sequencer2 = sequencer.lock().await;
-
-                    let mut pairs= sequencer2.get_seq_no_pairs(&seq_numbers[..]).await;
-
+                     let mut pairs= sequencer2.get_seq_no_pairs(&seq_numbers[..]).await;
                     nacked_packets.append(&mut pairs);
-
-                   // self.receiver.r
-
-                   //todo
-
+                    //todo
                 }
 
              //   receiver.retransmit_packets(track, packets)
@@ -242,18 +215,17 @@ impl DownTrackLocal {
         }
 
         if fwd_pkts.len() > 0 {
-            receiver.send_rtcp(fwd_pkts);
+            if let Err(err) = receiver.send_rtcp(fwd_pkts) {
+                log::error!("send_rtcp err:{}", err);
+            }
         }
 
         // Ok(())
     }
 }
 #[async_trait]
-impl TrackLocal for DownTrackLocal {
-    // async fn bind(&self, t: &TrackLocalContext) -> Result<RTCRtpCodecParameters>;
-
+impl TrackLocal for DownTrackInternal {
     async fn bind(&self, t: &TrackLocalContext) -> Result<RTCRtpCodecParameters> {
-        log::info!("down_track_local bind..");
         let parameters = RTCRtpCodecParameters {
             capability: self.codec.clone(),
             ..Default::default()
@@ -270,10 +242,8 @@ impl TrackLocal for DownTrackLocal {
         let mut mime = self.mime.lock().await;
         *mime = codec.capability.mime_type.to_lowercase();
         self.re_sync.store(true, Ordering::Relaxed);
-        log::info!("down_track_local bind 1..");
         self.enabled.store(true, Ordering::Relaxed);
-        log::info!("down_track_local bind 2..");
-        let mut buffer_factory = self.buffer_factory.lock().await;
+        let buffer_factory = self.buffer_factory.lock().await;
 
         let rtcp_buffer = buffer_factory.get_or_new_rtcp_buffer(t.ssrc()).await;
         let mut rtcp = rtcp_buffer.lock().await;
@@ -290,7 +260,7 @@ impl TrackLocal for DownTrackLocal {
             let sequencer2 = sequencer.clone();
             let receiver2 = receiver.clone();
             Box::pin(async move {
-                DownTrackLocal::handle_rtcp(
+                DownTrackInternal::handle_rtcp(
                     enabled, data, last_ssrc, ssrc_val, sequencer2, receiver2,
                 )
                 .await;
@@ -311,10 +281,6 @@ impl TrackLocal for DownTrackLocal {
         self.bound.store(true, Ordering::Relaxed);
         Ok(codec)
     }
-
-    // /// unbind should implement the teardown logic when the track is no longer needed. This happens
-    // /// because a track has been stopped.
-    // async fn unbind(&self, t: &TrackLocalContext) -> Result<()>;
 
     async fn unbind(&self, t: &TrackLocalContext) -> Result<()> {
         self.bound.store(false, Ordering::Relaxed);
@@ -344,17 +310,4 @@ impl TrackLocal for DownTrackLocal {
     fn as_any(&self) -> &dyn Any {
         self
     }
-
-    // /// id is the unique identifier for this Track. This should be unique for the
-    // /// stream, but doesn't have to globally unique. A common example would be 'audio' or 'video'
-    // /// and stream_id would be 'desktop' or 'webcam'
-    // fn id(&self) -> &str;
-
-    // /// stream_id is the group this track belongs too. This must be unique
-    // fn stream_id(&self) -> &str;
-
-    // /// kind controls if this TrackLocal is audio or video
-    // fn kind(&self) -> RTPCodecType;
-
-    // fn as_any(&self) -> &dyn Any;
 }

@@ -35,8 +35,7 @@ use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecParameters;
 use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
 use webrtc::track::track_local::{TrackLocal, TrackLocalContext};
 
-use super::down_track_local::DownTrackLocal;
-use rtcp::packet::Packet as RtcpPacket;
+use super::down_track_internal::DownTrackInternal;
 use std::any::Any;
 
 pub type OnCloseFn =
@@ -81,12 +80,15 @@ pub struct DownTrack {
     pub transceiver: Option<Arc<RTCRtpTransceiver>>,
     pub on_close_handler: Arc<Mutex<Option<OnCloseFn>>>,
 
+    #[allow(dead_code)]
     close_once: Once,
     octet_count: AtomicU32,
+    #[allow(dead_code)]
     packet_count: AtomicU32,
+    #[allow(dead_code)]
     max_packet_ts: u32,
 
-    down_track_local: Arc<DownTrackLocal>,
+    down_track_local: Arc<DownTrackInternal>,
 }
 
 impl PartialEq for DownTrack {
@@ -123,11 +125,11 @@ impl DownTrack {
             octet_count: AtomicU32::new(0),
             packet_count: AtomicU32::new(0),
             max_packet_ts: 0,
-            down_track_local: Arc::new(DownTrackLocal::new(c, r, mt).await),
+            down_track_local: Arc::new(DownTrackInternal::new(c, r, mt).await),
         }
     }
 
-    pub(super) fn new_track_local(peer_id: String, track: Arc<DownTrackLocal>) -> Self {
+    pub(super) fn new_track_local(peer_id: String, track: Arc<DownTrackInternal>) -> Self {
         Self {
             peer_id: peer_id,
             track_type: Mutex::new(DownTrackType::SimpleDownTrack),
@@ -680,15 +682,16 @@ impl DownTrack {
         Ok(())
     }
 
+    #[allow(dead_code)]
     async fn handle_layer_change(
         self: &Arc<Self>,
         max_rate_packet_loss: u8,
         expected_min_bitrate: u64,
     ) {
-        let mut current_spatial_layer = self.current_spatial_layer.load(Ordering::Relaxed);
-        let mut target_spatial_layer = self.target_spatial_layer.load(Ordering::Relaxed);
+        let current_spatial_layer = self.current_spatial_layer.load(Ordering::Relaxed);
+        let target_spatial_layer = self.target_spatial_layer.load(Ordering::Relaxed);
 
-        let mut temporal_layer = self.temporal_layer.load(Ordering::Relaxed);
+        let temporal_layer = self.temporal_layer.load(Ordering::Relaxed);
         let current_temporal_layer = temporal_layer & 0x0f;
         let target_temporal_layer = temporal_layer >> 16;
 
@@ -710,7 +713,8 @@ impl DownTrack {
                             <= self.max_temporal_layer.load(Ordering::Relaxed)
                         && expected_min_bitrate >= 3 * cbr / 4
                     {
-                        self.switch_temporal_layer(target_temporal_layer + 1, false);
+                        self.switch_temporal_layer(target_temporal_layer + 1, false)
+                            .await;
                         simulcast.switch_delay = SystemTime::now() + Duration::from_secs(3);
                     }
 
@@ -776,133 +780,13 @@ impl DownTrack {
     pub fn id(&self) -> String {
         self.down_track_local.id.clone()
     }
-
-    // async fn handle_rtcp(
-    //     enabled: bool,
-    //     data: Vec<u8>,
-    //     last_ssrc: u32,
-    //     ssrc: u32,
-    //     sequencer: Arc<Mutex<AtomicSequencer>>,
-    //     receiver: Arc<Mutex<dyn Receiver + Send + Sync>>,
-    // ) {
-    //     // let enabled = self.enabled.load(Ordering::Relaxed);
-    //     if !enabled {
-    //         return;
-    //     }
-
-    //     let mut buf = &data[..];
-
-    //     let mut pkts_result = rtcp::packet::unmarshal(&mut buf);
-    //     let mut pkts;
-
-    //     match pkts_result {
-    //         Ok(pkts_rv) => {
-    //             pkts = pkts_rv;
-    //         }
-    //         Err(_) => {
-    //             return;
-    //         }
-    //     }
-
-    //     let mut fwd_pkts: Vec<Box<dyn RtcpPacket + Send + Sync>> = Vec::new();
-    //     let mut pli_once = true;
-    //     let mut fir_once = true;
-
-    //     let mut max_rate_packet_loss: u8 = 0;
-    //     let mut expected_min_bitrate: u64 = 0;
-
-    //     if last_ssrc == 0 {
-    //         return;
-    //     }
-
-    //     for pkt in &mut pkts {
-    //         if let Some(pic_loss_indication) = pkt
-    //                 .as_any()
-    //                 .downcast_ref::<rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication>()
-    //             {
-    //                 if pli_once {
-    //                     let mut pli = pic_loss_indication.clone();
-    //                     pli.media_ssrc = last_ssrc;
-    //                     pli.sender_ssrc = ssrc;
-
-    //                     fwd_pkts.push(Box::new(pli));
-    //                     pli_once = false;
-    //                 }
-    //             }
-    //         else if let Some(full_intra_request) = pkt
-    //                 .as_any()
-    //                 .downcast_ref::<rtcp::payload_feedbacks::full_intra_request::FullIntraRequest>()
-    //         {
-    //             if fir_once{
-    //                 let mut fir = full_intra_request.clone();
-    //                 fir.media_ssrc = last_ssrc;
-    //                 fir.sender_ssrc = ssrc;
-
-    //                 fwd_pkts.push(Box::new(fir));
-    //                 fir_once = false;
-    //             }
-    //         }
-    //         else if let Some(receiver_estimated_max_bitrate) = pkt
-    //                 .as_any()
-    //                 .downcast_ref::<rtcp::payload_feedbacks::receiver_estimated_maximum_bitrate::ReceiverEstimatedMaximumBitrate>()
-    //                 {
-    //             if expected_min_bitrate == 0 || expected_min_bitrate > receiver_estimated_max_bitrate.bitrate as u64{
-    //                 expected_min_bitrate = receiver_estimated_max_bitrate.bitrate as u64;
-
-    //             }
-    //         }
-    //         else if let Some(receiver_report) = pkt.as_any().downcast_ref::<rtcp::receiver_report::ReceiverReport>(){
-
-    //             for r in &receiver_report.reports{
-    //                 if max_rate_packet_loss == 0 || max_rate_packet_loss < r.fraction_lost{
-    //                     max_rate_packet_loss = r.fraction_lost;
-    //                 }
-
-    //             }
-
-    //         }
-    //         else if let Some(transport_layer_nack) = pkt.as_any().downcast_ref::<rtcp::transport_feedbacks::transport_layer_nack::TransportLayerNack>()
-    //         {
-    //             let mut nacked_packets:Vec<PacketMeta> = Vec::new();
-    //             for pair in &transport_layer_nack.nacks{
-
-    //                              let seq_numbers = pair.packet_list();
-    //                  let sequencer2 = sequencer.lock().await;
-
-    //                 let mut pairs= sequencer2.get_seq_no_pairs(&seq_numbers[..]).await;
-
-    //                 nacked_packets.append(&mut pairs);
-
-    //                // self.receiver.r
-
-    //                //todo
-
-    //             }
-
-    //          //   receiver.retransmit_packets(track, packets)
-
-    //         }
-    //     }
-
-    //     if fwd_pkts.len() > 0 {
-    //         receiver.lock().await.send_rtcp(fwd_pkts);
-    //     }
-
-    //     // Ok(())
-    // }
 }
 #[async_trait]
 impl TrackLocal for DownTrack {
-    // async fn bind(&self, t: &TrackLocalContext) -> Result<RTCRtpCodecParameters>;
-
     async fn bind(&self, t: &TrackLocalContext) -> RTCResult<RTCRtpCodecParameters> {
         log::info!("TrackLocal bind.......");
         self.down_track_local.bind(t).await
     }
-
-    // /// unbind should implement the teardown logic when the track is no longer needed. This happens
-    // /// because a track has been stopped.
-    // async fn unbind(&self, t: &TrackLocalContext) -> Result<()>;
 
     async fn unbind(&self, t: &TrackLocalContext) -> RTCResult<()> {
         self.down_track_local.unbind(t).await
@@ -923,17 +807,4 @@ impl TrackLocal for DownTrack {
     fn as_any(&self) -> &dyn Any {
         self
     }
-
-    // /// id is the unique identifier for this Track. This should be unique for the
-    // /// stream, but doesn't have to globally unique. A common example would be 'audio' or 'video'
-    // /// and stream_id would be 'desktop' or 'webcam'
-    // fn id(&self) -> &str;
-
-    // /// stream_id is the group this track belongs too. This must be unique
-    // fn stream_id(&self) -> &str;
-
-    // /// kind controls if this TrackLocal is audio or video
-    // fn kind(&self) -> RTPCodecType;
-
-    // fn as_any(&self) -> &dyn Any;
 }

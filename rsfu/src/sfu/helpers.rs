@@ -8,10 +8,10 @@ use webrtc::error::Result;
 use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
-use webrtc::rtp_transceiver::rtp_codec::{RTCRtpCodecParameters, RTPCodecType};
+use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecParameters;
 use webrtc::Error as WebrtcError;
 
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use bytes::{Bytes, BytesMut};
 
 // setVp8TemporalLayer is a helper to detect and modify accordingly the vp8 payload to reflect
 // temporal changes in the SFU.

@@ -8,7 +8,7 @@ pub mod router;
 pub mod session;
 
 pub mod down_track;
-pub mod down_track_local;
+pub mod down_track_internal;
 pub mod errors;
 pub mod helpers;
 pub mod media_engine;
