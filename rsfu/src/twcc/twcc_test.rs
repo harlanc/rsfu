@@ -1,17 +1,12 @@
 #[cfg(test)]
 mod tests {
-    use std::collections::BinaryHeap;
-    use std::collections::HashSet;
 
     use rtcp::header;
     use rtcp::header::Header;
     use rtcp::header::PacketType;
     use rtcp::transport_feedbacks::transport_layer_cc::SymbolSizeTypeTcc;
     use rtcp::transport_feedbacks::transport_layer_cc::SymbolTypeTcc;
-    use std::cmp::Ordering;
-    use std::sync::Arc;
     use webrtc_util::Marshal;
-
     use crate::twcc::twcc::Responder;
 
     #[test]
@@ -23,10 +18,10 @@ mod tests {
 
         #[derive(Default, Clone)]
         pub struct Test {
-            name: String,
+            pub name: String,
             fields: Fields,
             args: Args,
-            want_err: bool,
+            pub want_err: bool,
             want_bytes: Vec<u8>,
         }
         #[derive(Default, Clone)]
@@ -62,7 +57,7 @@ mod tests {
             let mut t = Responder::new(0);
             t.len = test.fields.len;
 
-            for i in 0..test.fields.len {
+            for _i in 0..test.fields.len {
                 t.payload.push(0);
             }
 
@@ -82,7 +77,7 @@ mod tests {
 
         #[derive(Default, Clone)]
         pub struct Test {
-            name: String,
+            pub name: String,
             fields: Fields,
             args: Args,
             want_bytes: Vec<u8>,
@@ -143,7 +138,7 @@ mod tests {
             let mut t = Responder::new(0);
             t.len = test.fields.len;
 
-            for i in 0..test.fields.len {
+            for _i in 0..test.fields.len {
                 t.payload.push(0);
             }
 
@@ -178,7 +173,7 @@ mod tests {
         }
         #[derive(Default, Clone)]
         pub struct Test {
-            name: String,
+            pub name: String,
             fields: Fields,
             args: Args,
             want_bytes: Vec<u8>,
@@ -234,7 +229,7 @@ mod tests {
             let mut t = Responder::new(0);
             t.delta_len = test.fields.delta_len;
 
-            for i in 0..test.fields.delta_len {
+            for _i in 0..test.fields.delta_len {
                 t.deltas.push(0);
             }
 
@@ -262,7 +257,7 @@ mod tests {
         }
         #[derive(Default, Clone)]
         pub struct Test {
-            name: String,
+            pub name: String,
             fields: Fields,
             args: Args,
             want_bytes: Vec<u8>,

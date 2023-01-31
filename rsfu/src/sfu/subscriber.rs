@@ -1,7 +1,4 @@
 use std::collections::HashMap;
-
-use sdp::SessionDescription;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU32, Ordering};
 use webrtc::api;
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::data_channel::data_channel_init::RTCDataChannelInit;
@@ -13,39 +10,31 @@ use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::track::track_local::TrackLocal;
 
+use webrtc::api::media_engine::{MIME_TYPE_OPUS, MIME_TYPE_VP8};
 use webrtc::ice_transport::ice_gatherer::OnLocalCandidateHdlrFn;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::rtcp::source_description::SourceDescription;
 use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
-use webrtc::api::media_engine::{ MIME_TYPE_OPUS, MIME_TYPE_VP8};
 
-use super::peer::Peer;
 use crate::middlewares::middlewares::SetRemoteMedia;
 use std::future::Future;
-use std::io::Write;
+
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 
-use std::sync::Mutex as SyncMutex;
-
+use super::data_channel::DataChannel;
 use super::down_track::DownTrack;
 use super::media_engine;
 use super::sfu::WebRTCTransportConfig;
-use std::rc::Rc;
-
-use super::data_channel::Middlewares;
-use super::data_channel::{DataChannel, ProcessArgs, ProcessFunc};
 // use super::errors::SfuErrorValue;
 // use super::errors::{Result, SfuError};
 
 // use anyhow::Result;
 use super::errors::Result;
-use webrtc::rtp_transceiver::rtp_codec::{
-    RTCRtpCodecCapability, RTCRtpCodecParameters,
-};
+use webrtc::rtp_transceiver::rtp_codec::{RTCRtpCodecCapability, RTCRtpCodecParameters};
 
 pub const API_CHANNEL_LABEL: &'static str = "rsfu";
 
@@ -82,7 +71,7 @@ impl Subscriber {
             },
             RTPCodecType::Video,
         )?;
-    
+
         me.register_codec(
             RTCRtpCodecParameters {
                 capability: RTCRtpCodecCapability {
@@ -142,7 +131,7 @@ impl Subscriber {
             .create_data_channel(&dc.label[..], Some(RTCDataChannelInit::default()))
             .await?;
 
-        let dc_out = dc.clone();
+        //let dc_out = dc.clone();
         //let mws = Middlewares::new(dc.lock().await.middlewares.clone());
 
         // let p = mws.process(Arc::new(SyncMutex::new(ProcessFunc::new(Box::new(
@@ -157,14 +146,14 @@ impl Subscriber {
         //     },
         // )))));
 
-        let ndc_out = ndc.clone();
+        //let ndc_out = ndc.clone();
         // let subscriber_out = self.clone();
 
         let tracks_out = self.tracks.clone();
 
         ndc.on_message(Box::new(move |msg: DataChannelMessage| {
             //let p_in = Arc::clone(&p);
-            let ndc_in = ndc_out.clone();
+            //let ndc_in = ndc_out.clone();
 
             let data = String::from_utf8(msg.data.to_vec()).unwrap();
             let set_remote_media = serde_json::from_str::<SetRemoteMedia>(&data).unwrap();
@@ -214,7 +203,7 @@ impl Subscriber {
     }
 
     pub async fn add_ice_candidate(&self, candidate: RTCIceCandidateInit) -> Result<()> {
-        if let Some(descripton) = self.pc.remote_description().await {
+        if let Some(_) = self.pc.remote_description().await {
             self.pc.add_ice_candidate(candidate).await?;
             return Ok(());
         }
@@ -253,7 +242,7 @@ impl Subscriber {
             }
         }
     }
-
+    #[allow(dead_code)]
     async fn add_data_channel_by_label(&self, label: String) -> Result<Arc<RTCDataChannel>> {
         if let Some(channel) = self.channels.lock().await.get(&label) {
             return Ok(channel.clone());
@@ -286,7 +275,7 @@ impl Subscriber {
     pub async fn get_data_channel(&self, label: String) -> Option<Arc<RTCDataChannel>> {
         self.data_channel(label).await
     }
-
+    #[allow(dead_code)]
     async fn downtracks(&self) -> Vec<Arc<DownTrack>> {
         let mut downtracks: Vec<Arc<DownTrack>> = Vec::new();
         for (_, v) in &mut *self.tracks.lock().await {
@@ -323,7 +312,9 @@ impl Subscriber {
                 Box::pin(async move {
                     match ice_state {
                         RTCIceConnectionState::Failed | RTCIceConnectionState::Closed => {
-                            pc_in.close().await;
+                            if let Err(e) = pc_in.close().await {
+                                log::error!("on_ice_connection_state_change err: {}", e);
+                            }
                         }
                         _ => {}
                     }
@@ -331,7 +322,7 @@ impl Subscriber {
             },
         ));
     }
-
+    #[allow(dead_code)]
     async fn down_track_reports(&self) {
         loop {
             sleep(Duration::from_secs(5)).await;
@@ -380,7 +371,9 @@ impl Subscriber {
 
                 j += 1;
 
-                if let Err(err) = self.pc.write_rtcp(&rtcp_packets[..]).await {}
+                if let Err(err) = self.pc.write_rtcp(&rtcp_packets[..]).await {
+                    log::error!("write rtcp err: {}", err);
+                }
 
                 rtcp_packets.clear();
             }
@@ -393,7 +386,7 @@ impl Subscriber {
 
         if let Some(dts) = self.tracks.lock().await.get(&stream_id) {
             for dt in dts {
-                /// let dt = dt_val.lock().await;
+                // let dt = dt_val.lock().await;
                 if !dt.bound() {
                     continue;
                 }
@@ -414,7 +407,9 @@ impl Subscriber {
         tokio::spawn(async move {
             let mut i = 0;
             loop {
-                if let Err(err) = pc_out.write_rtcp(&rtcp_packets[..]).await {}
+                if let Err(err) = pc_out.write_rtcp(&rtcp_packets[..]).await {
+                    log::error!("write rtcp error: {}",err);
+                }
 
                 if i > 5 {
                     return;
@@ -463,7 +458,7 @@ async fn process(msg: DataChannelMessage, down_tracks: Vec<Arc<DownTrack>>) {
                 RTPCodecType::Audio => dt_val.mute(!set_remote_media.audio),
                 RTPCodecType::Video => {
                     match set_remote_media.video.as_str() {
-                        HIGH_VALUE => {
+                        _HIGH_VALUE => {
                             dt_val.mute(false);
                             dt_val.switch_spatial_layer(2, true).await;
                         }

@@ -1,6 +1,6 @@
 use super::errors::*;
 use anyhow::Result;
-use byteorder::{BigEndian, ByteOrder, WriteBytesExt};
+use byteorder::{BigEndian, WriteBytesExt};
 use bytes::Bytes;
 use rand::Rng;
 use rtcp::header::Header;
@@ -20,9 +20,9 @@ use rtcp::transport_feedbacks::transport_layer_cc::SymbolTypeTcc;
 
 use rtcp::packet::Packet as RtcpPacket;
 
-const BASE_SEQUENCE_NUMBER_OFFSET: i64 = 8;
-const PACKET_STATUS_COUNT_OFFSET: i64 = 10;
-const REFERENCE_TIME_OFFSET: i64 = 12;
+// const BASE_SEQUENCE_NUMBER_OFFSET: i64 = 8;
+// const PACKET_STATUS_COUNT_OFFSET: i64 = 10;
+// const REFERENCE_TIME_OFFSET: i64 = 12;
 
 const TCC_REPORT_DELTA: f64 = 1e8;
 const TCC_REPORT_DELTA_AFTER_MARK: f64 = 50e6;
@@ -37,8 +37,8 @@ pub type OnResponderFeedbackFn = Box<
 
 #[derive(Default, Clone)]
 pub struct RtpExtInfo {
-    ext_tsn: u32,
-    timestamp: i64,
+    pub ext_tsn: u32,
+    pub timestamp: i64,
 }
 
 // Responder will get the transport wide sequence number from rtp
@@ -51,10 +51,10 @@ pub struct Responder {
     ext_info: Arc<Mutex<Vec<RtpExtInfo>>>,
     last_report: i64,
     cycles: u32,
-    last_ext_sn: u32,
+    pub last_ext_sn: u32,
     pub pkt_ctn: u8,
     last_sn: u16,
-    last_ext_info: u16,
+    pub last_ext_info: u16,
     pub m_ssrc: u32,
     pub s_ssrc: u32,
 
@@ -135,7 +135,7 @@ impl Responder {
         *handler = Some(f);
     }
 
-    async fn build_transport_cc_packet(&mut self) -> Result<RawPacket> {
+    pub async fn build_transport_cc_packet(&mut self) -> Result<RawPacket> {
         let ext_info = Arc::clone(&self.ext_info);
         let mut ext_infos = ext_info.lock().await;
 
@@ -226,7 +226,8 @@ impl Responder {
                 if status_list.len() > 7 {
                     self.write_run_length_chunk(last_status as u16, status_list.len() as u16)?;
                     status_list.clear();
-                    last_status = SymbolTypeTcc::PacketReceivedWithoutDelta;
+                    //it is overwritten before read
+                    //last_status = SymbolTypeTcc::PacketReceivedWithoutDelta;
                     max_status = SymbolTypeTcc::PacketNotReceived;
                     same = true;
                 } else {
@@ -323,7 +324,7 @@ impl Responder {
         raw_packet_data.write(&self.deltas[..])?;
 
         if pad {
-            raw_packet_data.write_u8(pad_size);
+            raw_packet_data.write_u8(pad_size)?;
         }
 
         self.delta_len = 0;

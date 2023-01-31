@@ -33,6 +33,7 @@ pub const SFU_MAX_PORT: u16 = 60999;
 #[derive(Clone, Default, Deserialize)]
 pub(super) struct TurnAuth {
     #[serde(rename = "credentials")]
+    #[allow(dead_code)]
     credentials: String,
     secret: Option<String>,
 }
@@ -44,7 +45,9 @@ pub(super) struct TurnConfig {
     realm: String,
     #[serde(rename = "address")]
     address: String,
+    #[allow(dead_code)]
     cert: Option<String>,
+    #[allow(dead_code)]
     key: Option<String>,
     auth: TurnAuth,
     pub(super) port_range: Option<Vec<u16>>,
@@ -70,6 +73,7 @@ impl AuthHandler for CustomAuthHandler {
         if let Some(val) = self.users_map.get(&username.to_string()) {
             return Ok(val.clone());
         }
+        log::trace!("realm val: {}",realm);
 
         Err(Error::ErrNilConn)
     }
@@ -93,10 +97,10 @@ pub(super) async fn init_turn_server(
 
             for caps in re.captures_iter(conf.realm.clone().as_str()) {
                 let username = caps.get(1).unwrap().as_str();
-                let username_String = username.to_string();
+                let username_string = username.to_string();
                 let password = caps.get(2).unwrap().as_str();
                 users_map.insert(
-                    username_String,
+                    username_string,
                     auth::generate_auth_key(username, conf.realm.clone().as_str(), password),
                 );
             }

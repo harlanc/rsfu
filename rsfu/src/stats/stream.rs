@@ -1,14 +1,13 @@
+use crate::buffer::buffer::{AtomicBuffer, Stats};
 use anyhow::Result;
-use prometheus::{core::Collector, Histogram, HistogramOpts, HistogramVec};
+use prometheus::{Counter, Gauge, Opts, Registry};
+use prometheus::{Histogram, HistogramOpts};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use prometheus::{Counter, CounterVec, Encoder, Gauge, GaugeVec, Opts, Registry, TextEncoder};
-
-use crate::buffer::buffer::{AtomicBuffer, Stats};
-
-struct PrometheusHandler {
+#[allow(dead_code)]
+pub struct PrometheusHandler {
     drift: Histogram,
     expected_count: Counter,
     received_count: Counter,
@@ -67,7 +66,7 @@ impl PrometheusHandler {
             video_tracks,
         }
     }
-
+    #[allow(dead_code)]
     fn register(&self) -> Result<()> {
         let r = Registry::new();
 
@@ -85,6 +84,7 @@ impl PrometheusHandler {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Default)]
 pub struct StreamStats {
     has_stas: bool,
@@ -92,6 +92,7 @@ pub struct StreamStats {
     diff_stats: Stats,
 }
 
+#[allow(dead_code)]
 pub struct Stream {
     buffer: Arc<AtomicBuffer>,
 
@@ -114,7 +115,7 @@ impl Stream {
             prometheus_handler,
         }
     }
-
+    #[allow(dead_code)]
     async fn get_cname(&mut self) -> String {
         let cname = self.cname.lock().await;
         cname.clone()
@@ -124,15 +125,15 @@ impl Stream {
         let mut cname = self.cname.lock().await;
         *cname = val;
     }
-
+    #[allow(dead_code)]
     fn set_drift_in_millis(&mut self, val: u64) {
         self.drift_in_millis.store(val, Ordering::Relaxed);
     }
-
+    #[allow(dead_code)]
     fn get_drift_in_millis(&self) -> u64 {
         self.drift_in_millis.load(Ordering::Relaxed)
     }
-
+    #[allow(dead_code)]
     async fn update_stats(&mut self, stats: Stats) -> (bool, Stats) {
         let mut cur_stats = self.stats.lock().await;
 
@@ -158,12 +159,12 @@ impl Stream {
 
         (has_status, cur_stats.diff_stats.clone())
     }
-
+    #[allow(dead_code)]
     async fn calc_stats(&mut self) {
         let buffer_stats = self.buffer.get_status().await;
         let drift_in_millis = self.get_drift_in_millis();
 
-        let (has_stats, diff_stats) = self.update_stats(buffer_stats).await;
+        let (has_stats, _) = self.update_stats(buffer_stats).await;
 
         self.prometheus_handler
             .drift

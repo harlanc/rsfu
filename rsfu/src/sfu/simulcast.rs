@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 pub const QUARTER_RESOLUTION: &'static str = "q";
 pub const HALF_RESOLUTION: &'static str = "h";
