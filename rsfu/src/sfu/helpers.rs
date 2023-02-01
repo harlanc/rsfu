@@ -128,13 +128,14 @@ pub fn codec_parameters_fuzzy_search(
     Err(WebrtcError::ErrCodecNotFound.into())
 }
 
+#[allow(dead_code)]
 fn ntp_to_millis_since_epoch(ntp: u64) -> u64 {
     // ntp time since epoch calculate fractional ntp as milliseconds
     // (lower 32 bits stored as 1/2^32 seconds) and add
     // ntp seconds (stored in higher 32 bits) as milliseconds
     (((ntp & 0xFFFFFFFF) * 1000) >> 32) + ((ntp >> 32) * 1000)
 }
-
+#[allow(dead_code)]
 fn fast_forward_timestamp_amount(newest_timestamp: u32, reference_timestamp: u32) -> u32 {
     if buffer::buffer::is_timestamp_wrap_around(newest_timestamp, reference_timestamp) {
         return (newest_timestamp as u64 + 0x100000000 - reference_timestamp as u64) as u32;
@@ -152,6 +153,7 @@ pub struct NtpTime {
 }
 
 impl NtpTime {
+    #[allow(dead_code)]
     fn duration(&self) -> Duration {
         let sec = self.ntp_time >> 32 * 1000000000;
         let frac = (self.ntp_time & 0xffffffff) * 1000000000;
@@ -162,7 +164,7 @@ impl NtpTime {
 
         return Duration::new(sec, nsec);
     }
-
+    #[allow(dead_code)]
     fn time(&self) -> Option<SystemTime> {
         let now = SystemTime::now();
 

@@ -1,8 +1,5 @@
-use jrpc2::error::JsonError;
 use rsfu::sfu::peer::JoinConfig;
 use rsfu::sfu::peer::PeerLocal;
-use rsfu::sfu::sfu::SFU;
-use turn::server::request;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
@@ -49,7 +46,9 @@ pub struct JsonSignal {
 
 impl JsonSignal {
     pub fn new(p: PeerLocal) -> Self {
-        Self { peer_local: Arc::new(p) }
+        Self {
+            peer_local: Arc::new(p),
+        }
     }
 }
 
@@ -75,7 +74,6 @@ impl THandler<RequestParams, ResponseResult, ErrorData> for JsonSignal {
         json_rpc2: Arc<JsonRpc2<RequestParams, ResponseResult, ErrorData>>,
         request: Request<RequestParams>,
     ) {
-        //log::info!("handle begin...");
         let request_id = request.id;
         let response_error = |error_data: &str| {
             let err = Jrpc2Error::new(-1, error_data.to_string(), None);
@@ -87,7 +85,6 @@ impl THandler<RequestParams, ResponseResult, ErrorData> for JsonSignal {
 
         match request.method.as_str() {
             "join" => {
-                //log::info!("receive join");
                 let mut join_param: Option<Join> = None;
                 if let Some(Parameters::Join(join)) = request.params {
                     join_param = Some(join);
@@ -96,7 +93,7 @@ impl THandler<RequestParams, ResponseResult, ErrorData> for JsonSignal {
                     response_error("join parameter is none");
                     return;
                 }
-                //log::info!("join 1 ...");
+
                 let rpc2_out_clone = json_rpc2.clone();
                 self.peer_local
                     .on_offer(Box::new(move |offer: RTCSessionDescription| {
@@ -111,7 +108,7 @@ impl THandler<RequestParams, ResponseResult, ErrorData> for JsonSignal {
                         })
                     }))
                     .await;
-                    //log::info!("join 2 ...");
+
                 let rpc2_out_clone_2 = json_rpc2.clone();
                 self.peer_local
                     .on_ice_candidate(Box::new(
@@ -140,7 +137,6 @@ impl THandler<RequestParams, ResponseResult, ErrorData> for JsonSignal {
                     log::error!("join err: {}", err);
                     return;
                 }
-                log::info!("join 3...");
                 match self.peer_local.answer(join.offer).await {
                     Ok(answer) => {
                         if let Err(err) = json_rpc2.response(Response::new(
@@ -150,7 +146,6 @@ impl THandler<RequestParams, ResponseResult, ErrorData> for JsonSignal {
                         )) {
                             log::error!("response err: {}", err);
                         }
-                              log::info!("join 4 ...");
                     }
                     Err(err) => {
                         log::error!("answer error: {}", err);
@@ -172,7 +167,7 @@ impl THandler<RequestParams, ResponseResult, ErrorData> for JsonSignal {
                             }
                         }
                         Err(err) => {
-                            response_error("answer error");
+                            response_error(err.to_string().as_str());
                             return;
                         }
                     }
@@ -191,7 +186,7 @@ impl THandler<RequestParams, ResponseResult, ErrorData> for JsonSignal {
                         .set_remote_description(negotiation.desc)
                         .await
                     {
-                        response_error("set_remote_description error");
+                        response_error(err.to_string().as_str());
                     }
                 } else {
                     response_error("negotiation is none");
@@ -208,7 +203,7 @@ impl THandler<RequestParams, ResponseResult, ErrorData> for JsonSignal {
                         .trickle(trickle.candidate, trickle.target)
                         .await
                     {
-                        response_error("trickle error");
+                        response_error(err.to_string().as_str());
                     }
                 } else {
                     response_error("trickle is none");

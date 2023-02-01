@@ -282,7 +282,7 @@ impl TrackLocal for DownTrackInternal {
         Ok(codec)
     }
 
-    async fn unbind(&self, t: &TrackLocalContext) -> Result<()> {
+    async fn unbind(&self, _t: &TrackLocalContext) -> Result<()> {
         self.bound.store(false, Ordering::Relaxed);
         Ok(())
     }

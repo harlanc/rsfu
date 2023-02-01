@@ -160,13 +160,14 @@ impl DownTrack {
         }
     }
 
+    #[allow(dead_code)]
     fn codec(&self) -> RTCRtpCodecCapability {
         self.down_track_local.codec.clone()
     }
-
+    #[allow(dead_code)]
     async fn stop(&self) -> Result<()> {
         if let Some(transceiver) = &self.transceiver {
-            let rv = transceiver.stop().await?;
+            transceiver.stop().await?;
             return Ok(());
         }
 
@@ -212,7 +213,7 @@ impl DownTrack {
     }
 
     pub async fn write_rtp(&self, pkt: ExtPacket, layer: usize) -> Result<()> {
-        let cur_payload_type = self.down_track_local.payload_type.lock().await.clone();
+        //let cur_payload_type = self.down_track_local.payload_type.lock().await.clone();
 
         if !self.down_track_local.enabled.load(Ordering::Relaxed) {
             return Ok(());
@@ -320,7 +321,7 @@ impl DownTrack {
     pub fn switch_spatial_layer_done(&self, layer: i32) {
         self.current_spatial_layer.store(layer, Ordering::Relaxed);
     }
-
+    #[allow(dead_code)]
     async fn untrack_layers_change(self: &Arc<Self>, available_layers: &[u16]) -> Result<i64> {
         match *self.track_type.lock().await {
             DownTrackType::SimpleDownTrack => {
@@ -344,7 +345,7 @@ impl DownTrack {
                     }
                 }
 
-                let mut target_layer: u16 = 0;
+                let target_layer;
                 if layer_found {
                     target_layer = max_found;
                 } else {
@@ -436,7 +437,7 @@ impl DownTrack {
         }
 
         let receiver = &self.down_track_local.receiver;
-        let (sr_rtp, sr_ntp) = receiver
+        let (sr_rtp, _sr_ntp) = receiver
             .get_sender_report_time(self.current_spatial_layer.load(Ordering::Relaxed) as usize)
             .await;
 
@@ -447,13 +448,13 @@ impl DownTrack {
         let now = SystemTime::now();
         let now_ntp = helpers::to_ntp_time(now);
 
-        let clock_rate = self.down_track_local.codec.clock_rate;
+        let _clock_rate = self.down_track_local.codec.clock_rate;
 
         //todo
-        let mut diff: u32 = 0;
-        if diff < 0 {
-            diff = 0;
-        }
+        let diff: u32 = 0;
+        // if diff < 0 {
+        //     diff = 0;
+        // }
 
         let (octets, packets) = self.get_sr_status();
 
@@ -589,7 +590,7 @@ impl DownTrack {
                     receiver.send_rtcp(vec![Box::new(PictureLossIndication {
                         sender_ssrc: ssrc,
                         media_ssrc: ext_packet.packet.header.ssrc,
-                    })]);
+                    })])?;
                     return Ok(());
                 }
 
@@ -643,13 +644,14 @@ impl DownTrack {
         let new_ts = ext_packet.packet.header.timestamp - *self.ts_offset.lock().await;
         let payload = &ext_packet.packet.payload;
 
-        let pic_id: u16 = 0;
-        let tlz0_idx: u8 = 0;
+        let _pic_id: u16 = 0;
+        let _tlz0_idx: u8 = 0;
 
         if temporal_supported {
             let mime = self.down_track_local.mime.lock().await.clone();
             if mime == String::from("video/vp8") {
-                let (a, b, c, d) = helpers::set_vp8_temporal_layer(ext_packet.clone(), self).await;
+                let (_a, _b, _c, _d) =
+                    helpers::set_vp8_temporal_layer(ext_packet.clone(), self).await;
             }
         }
 
@@ -676,7 +678,7 @@ impl DownTrack {
 
         let write_stream_val = self.down_track_local.write_stream.lock().await;
         if let Some(write_stream) = &*write_stream_val {
-            write_stream.write_rtp(&cur_packet.packet).await;
+            write_stream.write_rtp(&cur_packet.packet).await?;
         }
 
         Ok(())
@@ -729,7 +731,7 @@ impl DownTrack {
                             .await
                         {
                             Ok(_) => {
-                                self.switch_temporal_layer(0, false);
+                                self.switch_temporal_layer(0, false).await;
                             }
                             Err(_) => {}
                         }
@@ -759,7 +761,7 @@ impl DownTrack {
                         }
                         simulcast.switch_delay = SystemTime::now() + Duration::from_secs(10);
                     } else {
-                        self.switch_temporal_layer(current_spatial_layer - 1, false);
+                        self.switch_temporal_layer(current_spatial_layer - 1, false).await;
                         simulcast.switch_delay = SystemTime::now() + Duration::from_secs(5);
                     }
                 }

@@ -19,7 +19,7 @@ use webrtc::data_channel::data_channel_state::RTCDataChannelState;
 use webrtc::data_channel::RTCDataChannel;
 
 use std::str;
-use tokio::sync::{Mutex};
+use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 
 use super::subscriber::API_CHANNEL_LABEL;
@@ -105,7 +105,7 @@ impl SessionLocal {
 
         session_local
     }
-    
+    #[allow(dead_code)]
     async fn get_relay_peer(&self, peer_id: String) -> Option<Arc<RelayPeer>> {
         let relay_peers = self.relay_peers.lock().await;
         if let Some(relay_peer) = relay_peers.get(&peer_id) {
@@ -264,7 +264,7 @@ impl Session for SessionLocal {
         let id = peer.id().await;
 
         let mut peers = self.peers.lock().await;
-        if let Some(p) = peers.get(&id) {
+        if peers.get(&id).is_some() {
             peers.remove(&id);
         }
 
@@ -278,7 +278,6 @@ impl Session for SessionLocal {
         let label = dc.label().to_string();
 
         let data_channels_out = self.get_data_channels(owner.clone(), label.clone()).await;
-
         for lbl in &*self.fanout_data_channels.lock().await {
             if label == lbl.clone() {
                 dc.on_message(Box::new(move |msg: DataChannelMessage| {
@@ -290,17 +289,13 @@ impl Session for SessionLocal {
                 return;
             }
         }
-
         self.fanout_data_channels.lock().await.push(label.clone());
-        log::info!("add_data_channel 0..");
-        //let peers = self.peers.lock().await;
-
         let peer_owner = self.get_peer(owner.clone()).await.unwrap();
 
-        //let peer_owner = peers.get(&owner).unwrap();
-
         if let Some(subscriber) = peer_owner.subscriber().await {
-            subscriber.register_data_channel(label.clone(), dc.clone());
+            subscriber
+                .register_data_channel(label.clone(), dc.clone())
+                .await;
         }
 
         let data_channels_out_2 = data_channels_out.clone();
@@ -311,9 +306,8 @@ impl Session for SessionLocal {
                 SessionLocal::fanout_message(data_channels_in, msg).await;
             })
         }));
-        log::info!("add_data_channel 1..");
+
         for peer in &self.peers().await {
-            log::info!("add_data_channel 2..");
             if peer.id().await == owner || peer.subscriber().await.is_none() {
                 continue;
             }
@@ -347,9 +341,7 @@ impl Session for SessionLocal {
         router: Arc<dyn Router + Send + Sync>,
         r: Arc<dyn Receiver + Send + Sync>,
     ) {
-        log::info!("publish.................");
         for peer in self.peers().await {
-            log::info!("publish 0.......................");
             let subscriber = peer.subscriber().await;
             if router.id() == peer.id().await || subscriber.is_none() {
                 continue;

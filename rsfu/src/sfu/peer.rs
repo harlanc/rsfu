@@ -442,7 +442,7 @@ impl PeerLocal {
         }
         Ok(())
     }
-
+    #[allow(dead_code)]
     async fn send_data_channel_message(&mut self, label: String, msg: String) -> Result<()> {
         let subscriber = self.subscriber.lock().await;
         if subscriber.is_none() {
@@ -459,7 +459,7 @@ impl PeerLocal {
 
         Ok(())
     }
-
+    #[allow(dead_code)]
     async fn close(self: &Arc<Self>) -> Result<()> {
         if self.closed.load(Ordering::Relaxed) {
             return Ok(());
@@ -492,6 +492,7 @@ impl PeerLocal {
     // fn session(self) -> Option<Arc<dyn Session + Send + Sync>> {
     //     self.session.lock
     // }
+    #[allow(dead_code)]
     async fn id(self) -> String {
         self.id.lock().await.clone()
     }

@@ -16,7 +16,7 @@ pub struct AudioObserver {
 }
 
 impl AudioObserver {
-    fn new(threshold_parameter: u8, interval_parameter: i32, filter_parameter: i32) -> Self {
+    pub fn new(threshold_parameter: u8, interval_parameter: i32, filter_parameter: i32) -> Self {
         let mut threshold: u8 = threshold_parameter;
         if threshold > 127 {
             threshold = 127;

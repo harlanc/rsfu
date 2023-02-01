@@ -71,21 +71,19 @@ pub struct Publisher {
     candidates: Arc<Mutex<Vec<RTCIceCandidateInit>>>,
 
     on_ice_connection_state_change_handler: Arc<Mutex<Option<OnIceConnectionStateChange>>>,
+    #[allow(dead_code)]
     on_publisher_track_handler: Arc<Mutex<Option<OnPublisherTrack>>>,
-
+    #[allow(dead_code)]
     close_once: Once,
 }
-
+#[allow(dead_code)]
 pub struct RelayPeer {
     peer: Peer,
     data_channels: Vec<Arc<RTCDataChannel>>,
-
     with_sr_reports: bool,
     relay_fanout_data_channels: bool,
 }
-
-struct TestA {}
-
+#[allow(dead_code)]
 #[derive(Clone)]
 pub(super) struct PublisherTrack {
     track: Arc<TrackRemote>,
@@ -134,9 +132,7 @@ impl Publisher {
             cfg: config_clone,
             router: Arc::new(RouterLocal::new(id, session.clone(), router)),
             session: session,
-
             tracks: Arc::new(Mutex::new(Vec::new())),
-
             relayed: AtomicBool::new(false),
             relay_peers: Arc::new(Mutex::new(Vec::new())),
             candidates: Arc::new(Mutex::new(Vec::new())),
@@ -165,13 +161,10 @@ impl Publisher {
         let peer_connection_out = self.pc.clone();
         let peer_connection_out_2 = self.pc.clone();
 
-        // Arc<TrackRemote>,
-        // Arc<RTCRtpReceiver>,
-        // Arc<RTCRtpTransceiver>,
         self.pc.on_track(Box::new(
             move |track: Arc<TrackRemote>,
                   receiver: Arc<RTCRtpReceiver>,
-                  transceiver: Arc<RTCRtpTransceiver>| {
+                  _transceiver: Arc<RTCRtpTransceiver>| {
                 let router_in = Arc::clone(&router_out);
                 let router_in2 = Arc::clone(&router_out);
                 let session_in = Arc::clone(&session_out);
@@ -274,7 +267,7 @@ impl Publisher {
                 move |packets: Vec<Box<dyn RtcpPacket + Send + Sync>>| {
                     let pc_clone_in = pc_clone_out.clone();
                     Box::pin(async move {
-                        pc_clone_in.write_rtcp(&packets[..]).await;
+                        pc_clone_in.write_rtcp(&packets[..]).await?;
                         Ok(())
                     })
                 },
@@ -299,7 +292,9 @@ impl Publisher {
         self.pc.set_remote_description(offer).await?;
 
         for c in &*self.candidates.lock().await {
-            if let Err(err) = self.pc.add_ice_candidate(c.clone()).await {}
+            if let Err(err) = self.pc.add_ice_candidate(c.clone()).await {
+                log::error!("answer :{}", err);
+            }
         }
 
         let answer = self.pc.create_answer(None).await?;
@@ -311,7 +306,7 @@ impl Publisher {
     pub fn get_router(&self) -> Arc<dyn Router + Send + Sync> {
         self.router.clone()
     }
-
+    #[allow(dead_code)]
     async fn on_publisher_track(&self, f: OnPublisherTrack) {
         let mut handler = self.on_publisher_track_handler.lock().await;
         *handler = Some(f);
@@ -329,15 +324,15 @@ impl Publisher {
     pub fn signaling_state(&self) -> RTCSignalingState {
         self.pc.signaling_state()
     }
-
+    #[allow(dead_code)]
     fn peer_connection(&self) -> Arc<RTCPeerConnection> {
         self.pc.clone()
     }
-
+    #[allow(dead_code)]
     async fn publisher_tracks(&self) -> Vec<PublisherTrack> {
         self.tracks.lock().await.clone()
     }
-
+    #[allow(dead_code)]
     async fn add_relay_fanout_data_channel(&self, label: &String) {
         for rp in &mut *self.relay_peers.lock().await {
             for dc in &rp.data_channels {
@@ -363,7 +358,7 @@ impl Publisher {
             }
         }
     }
-
+    #[allow(dead_code)]
     async fn get_relayed_data_channels(&self, label: String) -> Vec<Arc<RTCDataChannel>> {
         let mut data_channels = Vec::new();
 
@@ -380,7 +375,7 @@ impl Publisher {
     pub fn relayed(&self) -> bool {
         self.relayed.load(Ordering::Relaxed)
     }
-
+    #[allow(dead_code)]
     async fn tracks(&self) -> Vec<Arc<TrackRemote>> {
         let mut tracks = Vec::new();
 
@@ -392,7 +387,7 @@ impl Publisher {
     }
 
     pub async fn add_ice_candidata(&self, candidate: RTCIceCandidateInit) -> Result<()> {
-        if let Some(desp) = self.pc.remote_description().await {
+        if let Some(_desp) = self.pc.remote_description().await {
             self.pc.add_ice_candidate(candidate.clone()).await?;
         }
 
@@ -520,11 +515,13 @@ impl Publisher {
             val.peer.close().await;
         }
         router.stop().await;
-        pc.close().await;
+        if let Err(err) = pc.close().await {
+            log::error!("close err:{}", err);
+        }
         //     });
         // });
     }
-
+    #[allow(dead_code)]
     async fn relay_reports(&self, rp: &mut Peer) {
         loop {
             sleep(Duration::from_secs(5)).await;
@@ -554,7 +551,7 @@ impl Publisher {
 
             match rp.write_rtcp(&rtcp_packets[..]).await {
                 Ok(_) => {}
-                Err(err) => {}
+                Err(_) => {}
             }
             // if self.closed {
             //     return Err(Error::ErrIOEof.into());
