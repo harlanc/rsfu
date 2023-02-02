@@ -20,8 +20,8 @@ pub struct Bucket {
     // src: Vec<u8>,
     init: bool,
     step: i32,
-    headSN: u16,
-    maxSteps: i32,
+    head_sn: u16,
+    max_steps: i32,
 }
 
 impl Bucket {
@@ -31,14 +31,14 @@ impl Bucket {
             // src: Vec::new(),
             init: false,
             step: 0,
-            headSN: 0,
-            maxSteps: (length / MAX_PACKET_SIZE) as i32 - 1,
+            head_sn: 0,
+            max_steps: (length / MAX_PACKET_SIZE) as i32 - 1,
         }
     }
 
     pub fn add_packet(&mut self, pkt: &[u8], sn: u16, latest: bool) -> Result<Vec<u8>> {
         if !self.init {
-            self.headSN = sn - 1;
+            self.head_sn = sn - 1;
             self.init = true;
         }
 
@@ -46,12 +46,12 @@ impl Bucket {
             return self.set(sn, pkt);
         }
 
-        let diff: u16 = distance(sn, self.headSN);
-        self.headSN = sn;
+        let diff: u16 = distance(sn, self.head_sn);
+        self.head_sn = sn;
 
         for _ in 1..diff {
             self.step += 1;
-            if self.step >= self.maxSteps {
+            if self.step >= self.max_steps {
                 self.step = 0;
             }
         }
@@ -93,7 +93,7 @@ impl Bucket {
 
         self.step += 1;
 
-        if self.step > self.maxSteps {
+        if self.step > self.max_steps {
             self.step = 0;
         }
 
@@ -101,14 +101,14 @@ impl Bucket {
     }
 
     pub fn get(&self, sn: u16) -> Option<Vec<u8>> {
-        let diff: u16 = distance(self.headSN, sn);
+        let diff: u16 = distance(self.head_sn, sn);
 
         let mut pos = self.step - (diff + 1) as i32;
         if pos < 0 {
-            if pos * -1 > self.maxSteps + 1 {
+            if pos * -1 > self.max_steps + 1 {
                 return None;
             }
-            pos = self.maxSteps + pos + 1;
+            pos = self.max_steps + pos + 1;
         }
 
         let off = pos as usize * MAX_PACKET_SIZE;
@@ -127,13 +127,13 @@ impl Bucket {
     }
 
     fn set(&mut self, sn: u16, pkt: &[u8]) -> Result<Vec<u8>> {
-        let diff: u16 = distance(self.headSN, sn);
-        if diff >= self.maxSteps as u16 + 1 {
+        let diff: u16 = distance(self.head_sn, sn);
+        if diff >= self.max_steps as u16 + 1 {
             return Err(Error::ErrPacketTooOld.into());
         }
         let mut pos = self.step - (diff + 1) as i32;
         if pos < 0 {
-            pos = self.maxSteps + pos + 1
+            pos = self.max_steps + pos + 1
         }
 
         let off = pos * MAX_PACKET_SIZE as i32;
@@ -161,7 +161,7 @@ mod tests {
     #[test]
     fn test_bigendian() {
         let mut datas = vec![0; 30];
-        let mut src = vec![2, 3, 4];
+        let src = vec![2, 3, 4];
         let length = src.len();
         datas[2..length + 2].copy_from_slice(&src);
 

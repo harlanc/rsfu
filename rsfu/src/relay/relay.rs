@@ -242,7 +242,7 @@ impl Peer {
     }
 
     #[allow(dead_code)]
-    async fn init(&mut self, meta: PeerMeta, conf: PeerConfig) {
+    async fn init(&mut self, _meta: PeerMeta, _conf: PeerConfig) {
         let on_ready_handler = Arc::clone(&self.on_ready_handler);
 
         self.sctp_transport
@@ -258,7 +258,7 @@ impl Peer {
                                 }
                             })
                         }));
-                        d.on_message(Box::new(move |d: DataChannelMessage| {
+                        d.on_message(Box::new(move |_d: DataChannelMessage| {
                             Box::pin(async move {
                                 //  self.handle_request(d).await;
                             })
@@ -269,7 +269,7 @@ impl Peer {
                 }
             }));
     }
-
+    #[allow(dead_code)]
     async fn handle_request(&mut self, msg: DataChannelMessage) -> Result<()> {
         let request: Request = serde_json::from_slice(&msg.data[..])?;
 
@@ -303,16 +303,17 @@ impl Peer {
 
         Ok(())
     }
-
+    #[allow(dead_code)]
     fn id(&self) -> String {
         self.peer_meta.peer_id.clone()
     }
     // Offer is used for establish the connection of the local relay Peer
     // with the remote relay Peer.
     // If connection is successful OnReady handler will be called
+    #[allow(dead_code)]
     async fn offer(
         &mut self,
-        signalFn: fn(meta: PeerMeta, singal: &str) -> Result<String>,
+        signal_fn: fn(meta: PeerMeta, singal: &str) -> Result<String>,
     ) -> Result<()> {
         if self.ice_gatherer.state() != RTCIceGathererState::New {
             return Err(Error::ErrRelayPeerSignalDone.into());
@@ -353,7 +354,7 @@ impl Peer {
         self.ice_role = Arc::new(RTCIceRole::Controlling);
         let json_str = serde_json::to_string(&local_signal)?;
 
-        let data = signalFn(self.peer_meta.clone(), &json_str)?;
+        let data = signal_fn(self.peer_meta.clone(), &json_str)?;
 
         let remote_signal = serde_json::from_str::<Signal>(&data)?;
 
@@ -455,8 +456,6 @@ impl Peer {
     }
 
     pub async fn create_data_channel(&mut self, label: String) -> Result<RTCDataChannel> {
-        let idx = self.dc_index;
-
         self.dc_index += 1;
         let dc_parameters = DataChannelParameters {
             label,
@@ -683,7 +682,7 @@ impl Peer {
 
         Ok(sdr_arc)
     }
-
+    #[allow(dead_code)]
     async fn emit(&mut self, event: String, payload: Vec<u8>) -> Result<()> {
         let mut rng0 = StdRng::from_seed(SEED);
 

@@ -3,16 +3,14 @@ use jrpc2::jsonrpc2::JsonRpc2;
 use jrpc2::stream_ws::ServerObjectStream;
 use rsfu::sfu::peer::PeerLocal;
 use rsfu::sfu::sfu;
-use rsfu::sfu::sfu::Config;
 use rsfu::sfu::sfu::SFU;
+use rsfu_jrpc_server::server::server::JsonSignal;
+use std::env;
 use std::sync::Arc;
 use tokio;
 use tokio::net::TcpListener;
-use tokio::sync::Mutex;
-// use rsfu-jrpc-server::server::JsonSignal;
-use rsfu_jrpc_server::server::server::JsonSignal;
-use std::env;
 use tokio::signal;
+use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -23,7 +21,7 @@ async fn main() -> Result<()> {
     match config {
         Err(_) => {}
         Ok(c) => {
-            println!("sdp: {}",c.webrtc.sdp_semantics);
+            println!("sdp: {}", c.webrtc.sdp_semantics);
             env::set_var("RUST_LOG", "info");
             env_logger::init();
 

@@ -132,10 +132,12 @@ impl SessionLocal {
                 Ok(v) => v,
                 Err(e) => panic!("Invalid UTF-8 sequence: {}", e),
             };
-            if msg.is_string {
-                dc.send_text(s.to_string()).await;
+            if let Err(err) = if msg.is_string {
+                dc.send_text(s.to_string()).await
             } else {
-                dc.send(&msg.data).await;
+                dc.send(&msg.data).await
+            } {
+                log::error!("fanout_message send error:{}", err);
             }
         }
     }
@@ -332,7 +334,9 @@ impl Session for SessionLocal {
                 continue;
             }
             log::info!("AddDataChannel Negotiate");
-            subscriber.negotiate().await;
+            if let Err(err) = subscriber.negotiate().await {
+                log::error!("negotiate error:{}", err);
+            }
         }
     }
 
@@ -411,7 +415,9 @@ impl Session for SessionLocal {
 
         //todo
         log::info!("Subscribe Negotiate");
-        peer.subscriber().await.unwrap().negotiate().await;
+        if let Err(err) = peer.subscriber().await.unwrap().negotiate().await {
+            log::error!("negotiate error: {}", err);
+        }
     }
 
     async fn fanout_message(&self, origin: String, label: String, msg: DataChannelMessage) {
@@ -449,17 +455,15 @@ impl Session for SessionLocal {
 
     async fn peers(&self) -> Vec<Arc<dyn Peer + Send + Sync>> {
         let mut peers: Vec<Arc<dyn Peer + Send + Sync>> = Vec::new();
-        log::info!("get peers...");
         let peers_val = self.peers.lock().await;
-        log::info!("get peers ... size:{}", peers_val.len());
-        for (k, v) in &*peers_val {
+        for (_, v) in &*peers_val {
             peers.push(v.clone());
         }
         peers
     }
     async fn relay_peers(&self) -> Vec<Arc<RelayPeer>> {
         let mut relay_peers: Vec<Arc<RelayPeer>> = Vec::new();
-        for (k, v) in &*self.relay_peers.lock().await {
+        for (_, v) in &*self.relay_peers.lock().await {
             relay_peers.push(v.clone());
         }
         relay_peers

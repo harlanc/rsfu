@@ -45,7 +45,7 @@ pub type OnCloseHandlerFn =
 
 #[async_trait]
 pub trait Receiver: Send + Sync {
-    fn track_id(&self) -> String;
+fn track_id(&self) -> String;
     fn stream_id(&self) -> String;
     fn codec(&self) -> RTCRtpCodecParameters;
     fn kind(&self) -> RTPCodecType;
@@ -76,20 +76,23 @@ pub trait Receiver: Send + Sync {
 }
 
 pub struct WebRTCReceiver {
+    #[allow(dead_code)]
     peer_id: String,
     track_id: String,
     stream_id: String,
-
     kind: RTPCodecType,
     closed: AtomicBool,
+    #[allow(dead_code)]
     bandwidth: u64,
     last_pli: AtomicU64,
+    #[allow(dead_code)]
     stream: String,
     pub receiver: Arc<RTCRtpReceiver>,
     codec: RTCRtpCodecParameters,
     rtcp_sender: Arc<RtcpDataSender>,
     buffers: Arc<Mutex<[Option<Arc<AtomicBuffer>>; 3]>>,
     up_tracks: Arc<Mutex<[Option<Arc<TrackRemote>>; 3]>>,
+    #[allow(dead_code)]
     stats: [Option<Stream>; 3],
     available: Arc<Mutex<[AtomicBool; 3]>>,
     down_tracks: [Arc<Mutex<Vec<Arc<DownTrack>>>>; 3],
@@ -101,7 +104,7 @@ pub struct WebRTCReceiver {
 
 impl WebRTCReceiver {
     pub async fn new(receiver: Arc<RTCRtpReceiver>, track: Arc<TrackRemote>, pid: String) -> Self {
-        let (s, r) = mpsc::unbounded_channel();
+        let (s, _) = mpsc::unbounded_channel();
         Self {
             peer_id: pid,
             receiver: receiver,
@@ -182,7 +185,7 @@ impl Receiver for WebRTCReceiver {
             return None;
         }
 
-        let mut layer: usize;
+        let layer: usize;
         match track.rid() {
             simulcast::FULL_RESOLUTION => {
                 layer = 2;
@@ -213,7 +216,9 @@ impl Receiver for WebRTCReceiver {
                     continue;
                 }
                 for d in &mut *dts {
-                    d.switch_spatial_layer(target_layer as i32, false).await;
+                    if let Err(err) = d.switch_spatial_layer(target_layer as i32, false).await {
+                        log::error!("switch_spatial_layer err: {}", err);
+                    }
                 }
             }
         };
@@ -226,7 +231,9 @@ impl Receiver for WebRTCReceiver {
                     continue;
                 }
                 for d in &mut *dts {
-                    d.switch_spatial_layer(target_layer as i32, false).await;
+                    if let Err(err) = d.switch_spatial_layer(target_layer as i32, false).await {
+                        log::error!("switch_spatial_layer err: {}", err);
+                    }
                 }
             }
         };
@@ -342,28 +349,23 @@ impl Receiver for WebRTCReceiver {
     }
 
     fn send_rtcp(&self, p: Vec<Box<dyn RtcpPacket + Send + Sync>>) -> Result<()> {
-        log::info!("send rtcp");
-        if let Some(packet) = p.get(0) {
-            log::info!("send rtcp 0");
-            if  packet.as_any().downcast_ref::<rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication>().is_some() {
+ if let Some(packet) = p.get(0) {
+        if  packet.as_any().downcast_ref::<rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication>().is_some() {
                 let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
                 let threshold : u64 = 500 ;
-                log::info!("send rtcp 1");
-                if now - self.last_pli.load(Ordering::Relaxed) < threshold {
-                    log::info!("send rtcp 2");
-                    return Ok(());
+if now - self.last_pli.load(Ordering::Relaxed) < threshold {
+       return Ok(());
                 }
-                log::info!("send rtcp 3");
-                self.last_pli.store(now, Ordering::Relaxed) ;
-                log::info!("send rtcp 4");
+self.last_pli.store(now, Ordering::Relaxed) ;
+     
             }
         }
 
-        if let Err(err) = self.rtcp_sender.send(p) {
-            log::info!("send rtcp 5");
+        if let Err(_) = self.rtcp_sender.send(p) {
+ 
             return Err(Error::ErrChannelSend.into());
         }
-        log::info!("send rtcp 6");
+    
         Ok(())
     }
     fn set_rtcp_channel(
@@ -456,10 +458,6 @@ impl Receiver for WebRTCReceiver {
             if let Some(buffer) = &self.buffers.lock().await[layer] {
                 match buffer.read_extended().await {
                     Ok(pkt) => {
-                        log::info!(
-                            "read extended payload type: {}",
-                            pkt.packet.header.payload_type
-                        );
                         if self.is_simulcast && self.pending[layer].load(Ordering::Relaxed) {
                             if pkt.key_frame {
                                 //use tmp_val here just to skip the build error
@@ -489,12 +487,10 @@ impl Receiver for WebRTCReceiver {
                                 })])?;
                             }
                         }
-
-                        //log::info!("down_track write0: ");
                         let mut delete_down_track_params = Vec::new();
                         {
                             let mut dts = self.down_tracks[layer].lock().await;
-                            //log::info!("down_track write1:size:{} layer:{} ", dts.len(), layer);
+                 
                             for dt in &mut *dts {
                                 //let mut dt_value = dt.lock().await;
                                 // log::info!("down_track write: {}", dt.id());
@@ -540,6 +536,7 @@ impl Receiver for WebRTCReceiver {
 }
 
 impl WebRTCReceiver {
+    #[allow(dead_code)]
     async fn close_tracks(&self) {
         for (idx, a) in self.available.lock().await.iter().enumerate() {
             if a.load(Ordering::Relaxed) {

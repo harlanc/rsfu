@@ -167,14 +167,14 @@ impl WebRTCTransportConfig {
             }
         }
 
-        let mut sdp_semantics = RTCSdpSemantics::UnifiedPlan;
+        let mut _sdp_semantics = RTCSdpSemantics::UnifiedPlan;
 
         match c.webrtc.sdp_semantics.as_str() {
             "unified-plan-with-fallback" => {
-                sdp_semantics = RTCSdpSemantics::UnifiedPlanWithFallback;
+                _sdp_semantics = RTCSdpSemantics::UnifiedPlanWithFallback;
             }
             "plan-b" => {
-                sdp_semantics = RTCSdpSemantics::PlanB;
+                _sdp_semantics = RTCSdpSemantics::PlanB;
             }
             _ => {}
         }

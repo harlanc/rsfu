@@ -29,12 +29,16 @@ use super::data_channel::DataChannel;
 use super::down_track::DownTrack;
 use super::media_engine;
 use super::sfu::WebRTCTransportConfig;
-// use super::errors::SfuErrorValue;
-// use super::errors::{Result, SfuError};
 
-// use anyhow::Result;
 use super::errors::Result;
 use webrtc::rtp_transceiver::rtp_codec::{RTCRtpCodecCapability, RTCRtpCodecParameters};
+
+const HIGH_VALUE: &'static str = "high";
+const MEDIA_VALUE: &'static str = "medium";
+const LOW_VALUE: &'static str = "low";
+const MUTED_VALUE: &'static str = "none";
+#[allow(dead_code)]
+const ACTIVE_LAYER_METHOD: &'static str = "activeLayer";
 
 pub const API_CHANNEL_LABEL: &'static str = "rsfu";
 
@@ -408,7 +412,7 @@ impl Subscriber {
             let mut i = 0;
             loop {
                 if let Err(err) = pc_out.write_rtcp(&rtcp_packets[..]).await {
-                    log::error!("write rtcp error: {}",err);
+                    log::error!("write rtcp error: {}", err);
                 }
 
                 if i > 5 {
@@ -458,17 +462,23 @@ async fn process(msg: DataChannelMessage, down_tracks: Vec<Arc<DownTrack>>) {
                 RTPCodecType::Audio => dt_val.mute(!set_remote_media.audio),
                 RTPCodecType::Video => {
                     match set_remote_media.video.as_str() {
-                        _HIGH_VALUE => {
+                        HIGH_VALUE => {
                             dt_val.mute(false);
-                            dt_val.switch_spatial_layer(2, true).await;
+                            if let Err(err) = dt_val.switch_spatial_layer(2, true).await {
+                                log::error!("switch_spatial_layer err: {}", err);
+                            }
                         }
                         MEDIA_VALUE => {
                             dt_val.mute(false);
-                            dt_val.switch_spatial_layer(1, true).await;
+                            if let Err(err) = dt_val.switch_spatial_layer(1, true).await {
+                                log::error!("switch_spatial_layer err: {}", err);
+                            }
                         }
                         LOW_VALUE => {
                             dt_val.mute(false);
-                            dt_val.switch_spatial_layer(0, true).await;
+                            if let Err(err) = dt_val.switch_spatial_layer(0, true).await {
+                                log::error!("switch_spatial_layer err: {}", err);
+                            }
                         }
                         MUTED_VALUE => {
                             dt_val.mute(true);
@@ -478,13 +488,13 @@ async fn process(msg: DataChannelMessage, down_tracks: Vec<Arc<DownTrack>>) {
 
                     match set_remote_media.frame_rate.as_str() {
                         HIGH_VALUE => {
-                            dt_val.switch_temporal_layer(2, true);
+                            dt_val.switch_temporal_layer(2, true).await;
                         }
                         MEDIA_VALUE => {
-                            dt_val.switch_temporal_layer(1, true);
+                            dt_val.switch_temporal_layer(1, true).await;
                         }
                         LOW_VALUE => {
-                            dt_val.switch_temporal_layer(0, true);
+                            dt_val.switch_temporal_layer(0, true).await;
                         }
                         _ => {}
                     }

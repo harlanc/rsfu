@@ -14,23 +14,13 @@ pub type OnPacketFn = Box<
 pub type OnCloseFn = Box<dyn (FnMut() -> Pin<Box<dyn Future<Output = ()> + Send>>) + Send + Sync>;
 
 pub struct RTCPReader {
+    #[allow(dead_code)]
     ssrc: u32,
     closed: AtomicBool,
     on_packet_handler: Arc<Mutex<Option<OnPacketFn>>>,
     on_close_handler: Arc<Mutex<Option<OnCloseFn>>>,
 }
 //https://stackoverflow.com/questions/37370120/right-way-to-have-function-pointers-in-struct
-fn default() {}
-
-struct Test<'a> {
-    a: String,
-    b: &'a String,
-}
-#[derive(Debug)]
-struct Test1 {
-    a: String,
-    b: *const String, // 改成指针
-}
 
 impl RTCPReader {
     pub fn new(ssrc: u32) -> Self {
@@ -52,7 +42,7 @@ impl RTCPReader {
         *on_packet = Some(f);
     }
 
-    pub fn read(&mut self, buff: &mut [u8]) -> Result<usize> {
+    pub fn read(&mut self, _buff: &mut [u8]) -> Result<usize> {
         Ok(0)
     }
     pub async fn write(&mut self, p: Vec<u8>) -> Result<u32> {
@@ -77,6 +67,7 @@ impl RTCPReader {
 
         Ok(9)
     }
+    #[allow(dead_code)]
     async fn close(&mut self) -> Result<()> {
         self.closed.store(true, Ordering::Relaxed);
 

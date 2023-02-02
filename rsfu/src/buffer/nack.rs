@@ -28,9 +28,13 @@ impl NackQueue {
     }
     pub fn push(&mut self, sn: u32) {
         /*find the specified nack ele according to the sequence number*/
-        let rv = self
-            .nacks
-            .binary_search_by_key(&sn, |&Nack { seq_number, nackd }| seq_number);
+        let rv = self.nacks.binary_search_by_key(
+            &sn,
+            |&Nack {
+                 seq_number,
+                 nackd: _nackd,
+             }| seq_number,
+        );
 
         let insert_index: usize;
         match rv {
@@ -49,10 +53,13 @@ impl NackQueue {
     }
 
     pub fn remove(&mut self, sn: u32) -> Option<Nack> {
-        if let Ok(index) = self
-            .nacks
-            .binary_search_by_key(&sn, |&Nack { seq_number, nackd }| seq_number)
-        {
+        if let Ok(index) = self.nacks.binary_search_by_key(
+            &sn,
+            |&Nack {
+                 seq_number,
+                 nackd: _nackd,
+             }| seq_number,
+        ) {
             return Some(self.nacks.remove(index));
         }
 
@@ -123,9 +130,6 @@ impl NackQueue {
 
 #[cfg(test)]
 mod tests {
-
-    use crate::buffer::nack;
-
     use super::NackQueue;
     use rtcp::transport_feedbacks::transport_layer_nack::NackPair;
 

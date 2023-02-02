@@ -117,7 +117,9 @@ pub struct Buffer {
     last_sr_recv: i64, // Represents wall clock of the most recent sender report arrival
     base_sn: u16,
     cycles: u32,
+    #[allow(dead_code)]
     last_rtcp_packet_time: i64, // Time the last RTCP packet was received.
+    #[allow(dead_code)]
     last_rtcp_sr_time: i64, // Time the last RTCP SR was received. Required for DLSR computation.
     last_transit: u32,
     max_seq_no: u16, // The highest sequence number received in an RTP data packet
@@ -258,21 +260,11 @@ impl AtomicBuffer {
     }
 
     pub async fn calc(&self, pkt: &[u8], arrival_time: i64) {
-        // println!("calc 1....");
         let codc_type = self.buffer.lock().await.codec_type; //= RTPCodecType::Video;
-        if codc_type == RTPCodecType::Video {
-            // log::info!("calc 0");
-        }
         let buffer = &mut self.buffer.lock().await;
-
         let sn = BigEndian::read_u16(&pkt[2..4]);
-        if codc_type == RTPCodecType::Video {
-            log::info!("calc 2....: sn: {}", sn);
-        }
         let distance = bucket::distance(sn, buffer.max_seq_no);
-        if codc_type == RTPCodecType::Video {
-            log::info!("calc 3....: distance: {}", distance);
-        }
+
         if buffer.stats.packet_count == 0 {
             buffer.base_sn = sn;
             buffer.max_seq_no = sn;
@@ -327,12 +319,11 @@ impl AtomicBuffer {
             match rv {
                 Ok(data) => match Packet::unmarshal(&mut &data[..]) {
                     Err(_) => {
-                        println!("calc error 0....");
                         return;
                     }
                     Ok(p) => {
                         if codc_type == RTPCodecType::Video {
-                            log::info!("calc packet size: {}", data.len());
+                            log::trace!("calc packet size: {}", data.len());
                         }
                         packet = p;
                     }
@@ -592,7 +583,7 @@ impl AtomicBuffer {
     }
     #[allow(dead_code)]
     async fn get_rtcp(&mut self) -> Vec<Box<dyn RtcpPacket>> {
-        let mut buffer = self.buffer.lock().await;
+        let buffer = self.buffer.lock().await;
 
         let mut rtcp_packets: Vec<Box<dyn RtcpPacket>> = Vec::new();
         rtcp_packets.push(Box::new(self.build_reception_report().await));
@@ -753,16 +744,4 @@ fn is_later_timestamp(timestamp1: u32, timestamp2: u32) -> bool {
         return true;
     }
     return false;
-}
-
-#[cfg(test)]
-mod tests {
-
-    #[test]
-    fn test_u16() {
-        let number1: u16 = 0;
-        let number2: u16 = 2;
-
-        // println!("{}", number1 - number2);
-    }
 }

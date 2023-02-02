@@ -5,12 +5,6 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::sync::Mutex;
 
-const HIGH_VALUE: &'static str = "high";
-const MEDIA_VALUE: &'static str = "medium";
-const LOW_VALUE: &'static str = "low";
-const MUTED_VALUE: &'static str = "none";
-const ACTIVE_LAYER_METHOD: &'static str = "activeLayer";
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetRemoteMedia {
     #[serde(rename = "streamId")]
@@ -25,12 +19,13 @@ pub struct SetRemoteMedia {
     pub layers: Option<Vec<String>>,
 }
 
+#[allow(dead_code)]
 fn subscriber_api(
-    next: Arc<Mutex<dyn MessageProcessor + Send>>,
+    _next: Arc<Mutex<dyn MessageProcessor + Send>>,
 ) -> Arc<Mutex<dyn MessageProcessor + Send>> {
-    let f = ProcessFunc::new(Box::new(move |args: ProcessArgs| {
-        let next_in = next.clone();
-        let args_clone = args.clone();
+    let f = ProcessFunc::new(Box::new(move |_args: ProcessArgs| {
+        // let next_in = next.clone();
+        // let args_clone = args.clone();
 
         Box::pin(async move {
             // let data = String::from_utf8(args.message.data.to_vec()).unwrap();

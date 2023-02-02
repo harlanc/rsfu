@@ -244,8 +244,8 @@ impl Router for RouterLocal {
                         },
                     ))
                     .await;
-                    let mut t = &*self.twcc.lock().await;
-                    t = &Some(twcc);
+                    let mut t = self.twcc.lock().await;
+                    *t = Some(twcc);
                     //self.twcc = Arc::new(Mutex::new(Some(twcc)));
                 }
 
@@ -323,7 +323,7 @@ impl Router for RouterLocal {
                                 )
                                 .await;
                             if with_status {
-                                if let Some(stream) =
+                                if let Some(_stream) =
                                     stats_in.lock().await.get_mut(&sender_report.ssrc)
                                 {
                                     //update stats
@@ -480,7 +480,7 @@ impl Router for RouterLocal {
         &self,
         s: Arc<Subscriber>,
         r: Arc<dyn Receiver + Send + Sync>,
-    ) -> Result<(Option<Arc<DownTrack>>)> {
+    ) -> Result<Option<Arc<DownTrack>>> {
         let recv = r.clone();
         let downtracks = s.get_downtracks(recv.stream_id()).await;
         if let Some(downtracks_data) = downtracks {
@@ -554,7 +554,9 @@ impl Router for RouterLocal {
                                 s_in.remove_down_track(r_in.stream_id(), down_track_arc_in)
                                     .await;
                                 log::info!("RemoveDownTrack Negotiate");
-                                s_in.negotiate().await;
+                                if let Err(err) = s_in.negotiate().await {
+                                    log::error!("negotiate err:{} ", err);
+                                }
                             }
                             Err(err) => match err {
                                 RTCError::ErrConnectionClosed => {
@@ -608,7 +610,7 @@ impl Router for RouterLocal {
                     }
                 }
               }
-              data = stop_receiver.recv() => {
+              _data = stop_receiver.recv() => {
                 return ;
               }
             };

@@ -477,22 +477,15 @@ impl DownTrack {
 
     async fn write_simple_rtp(&self, packet: ExtPacket) -> Result<()> {
         let cur_payload_type = self.down_track_local.payload_type.lock().await.clone();
-        if cur_payload_type == 96 {
-            log::info!("write_simple_rtp PLI ");
-        }
-        //log::info!("write_simple_rtp payload type 0: {}", cur_payload_type);
         let mut ext_packet = packet.clone();
         let ssrc = self.down_track_local.ssrc.lock().await.clone();
-        //log::info!("write_simple_rtp payload type 0.1: {}", cur_payload_type);
+
         if self.down_track_local.re_sync.load(Ordering::Relaxed) {
-            //log::info!("write_simple_rtp payload type 0.2: {}", cur_payload_type);
             match self.down_track_local.kind() {
                 RTPCodecType::Video => {
-                    //log::info!("write_simple_rtp payload type 0.3: {}", cur_payload_type);
                     if !ext_packet.key_frame {
                         let receiver = &self.down_track_local.receiver;
-                        //log::info!("write_simple_rtp payload type 0.4: {}", cur_payload_type);
-                        log::info!(
+                        log::trace!(
                             "send PLI ssrc:{}, media_ssrc:{}",
                             ssrc,
                             ext_packet.packet.header.ssrc
@@ -501,35 +494,29 @@ impl DownTrack {
                             sender_ssrc: ssrc,
                             media_ssrc: ext_packet.packet.header.ssrc,
                         })])?;
-                        //log::info!("write_simple_rtp payload type 0.5: {}", cur_payload_type);
+
                         return Ok(());
                     }
-                    log::info!("get PLI");
                 }
                 _ => {}
             }
-            //log::info!("write_simple_rtp payload type 0.6: {}", cur_payload_type);
+
             if *self.last_sn.lock().await != 0 {
-                // log::info!("write_simple_rtp payload type 0.7: {}", cur_payload_type);
                 let mut sn_offset = self.sn_offset.lock().await;
                 *sn_offset =
                     ext_packet.packet.header.sequence_number - *self.last_sn.lock().await - 1;
                 let mut ts_offset = self.ts_offset.lock().await;
                 *ts_offset = ext_packet.packet.header.timestamp - *self.last_ts.lock().await - 1
             }
-            //log::info!("write_simple_rtp payload type 0.8: {}", cur_payload_type);
+
             self.down_track_local
                 .last_ssrc
                 .store(ext_packet.packet.header.ssrc, Ordering::Relaxed);
-            //log::info!("write_simple_rtp payload type 0.9: {}", cur_payload_type);
+
             self.down_track_local
                 .re_sync
                 .store(false, Ordering::Relaxed);
         }
-        if cur_payload_type == 96 {
-            log::info!("get PLI 2");
-        }
-        // log::info!("write_simple_rtp payload type 1: {}", cur_payload_type);
         self.update_stats(ext_packet.packet.payload.len() as u32);
 
         let new_sn = ext_packet.packet.header.sequence_number - *self.sn_offset.lock().await;
@@ -545,7 +532,7 @@ impl DownTrack {
                 ext_packet.head,
             )
             .await;
-        //log::info!("write_simple_rtp payload type 2: {}", cur_payload_type);
+
         if ext_packet.head {
             let mut last_sn = self.last_sn.lock().await;
             *last_sn = new_sn;
@@ -559,10 +546,9 @@ impl DownTrack {
         header.ssrc = ssrc;
 
         let write_stream_val = self.down_track_local.write_stream.lock().await;
-        // log::info!("write_simple_rtp payload type : {}", header.payload_type);
         if let Some(write_stream) = &*write_stream_val {
             let size = write_stream.write_rtp(&ext_packet.packet).await?;
-            log::info!("write_simple_rtp size:..{}", size);
+            log::trace!("write_simple_rtp size:..{}", size);
         }
 
         Ok(())
@@ -761,7 +747,8 @@ impl DownTrack {
                         }
                         simulcast.switch_delay = SystemTime::now() + Duration::from_secs(10);
                     } else {
-                        self.switch_temporal_layer(current_spatial_layer - 1, false).await;
+                        self.switch_temporal_layer(current_spatial_layer - 1, false)
+                            .await;
                         simulcast.switch_delay = SystemTime::now() + Duration::from_secs(5);
                     }
                 }

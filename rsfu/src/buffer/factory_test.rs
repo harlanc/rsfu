@@ -4,11 +4,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_factory_buffer() {
-        let mut factory: AtomicFactory = AtomicFactory::new(1000, 1000);
+        let factory: AtomicFactory = AtomicFactory::new(1000, 1000);
         let ssrc: u32 = 123456;
         let buffer = factory.get_or_new_buffer(ssrc).await;
 
-        const test_buf: [u8; 68] = [
+        const TEST_BUF: [u8; 68] = [
             0x47, 0x65, 0x6e, 0x75, 0x69, 0x6e, 0x65, 0x20, 0x41, 0x64, 0x6f, 0x62, 0x65, 0x20,
             0x46, 0x6c, 0x61, 0x73, 0x68, 0x20, 0x4d, 0x65, 0x64, 0x69, 0x61, 0x20, 0x53, 0x65,
             0x72, 0x76, 0x65, 0x72, 0x20, 0x30, 0x30,
@@ -19,7 +19,7 @@ mod tests {
         ];
         let time: i64 = 1000;
 
-        buffer.calc(&test_buf, time);
+        buffer.calc(&TEST_BUF, time).await;
 
         // let b - buffer.
     }
