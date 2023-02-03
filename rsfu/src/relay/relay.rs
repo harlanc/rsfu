@@ -616,7 +616,7 @@ impl Peer {
         let sdr = self
             .api
             .new_rtp_sender(
-                Some(Arc::clone(&local_track)),
+                Arc::clone(&local_track),
                 Arc::clone(&self.dtls_transport),
                 Arc::new(NoOp {}),
             )

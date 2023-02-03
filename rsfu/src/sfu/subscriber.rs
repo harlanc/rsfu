@@ -298,7 +298,7 @@ impl Subscriber {
     }
 
     pub async fn negotiate(&self) -> Result<()> {
-        println!("on_offer negotiate");
+        log::info!("negotiate..");
         let mut handler = self.on_negotiate_handler.lock().await;
         if let Some(f) = &mut *handler {
             //sleep(Duration::from_millis(1000)).await;

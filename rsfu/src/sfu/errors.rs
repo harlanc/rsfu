@@ -3,6 +3,8 @@ use thiserror::Error;
 use rtcp::Error as RTCPError;
 use webrtc::Error as RTCError;
 pub type Result<T> = std::result::Result<T, Error>;
+use failure::Fail;
+use std::fmt;
 use std::io::Error as IOError;
 
 #[derive(Error, Debug, PartialEq)]
@@ -61,8 +63,9 @@ impl From<RTCPError> for Error {
 pub struct ConfigError {
     pub value: ConfigErrorValue,
 }
-
+#[derive(Debug, Fail)]
 pub enum ConfigErrorValue {
+    #[fail(display = "io errorr")]
     IOError(IOError),
 }
 
@@ -71,5 +74,11 @@ impl From<IOError> for ConfigError {
         ConfigError {
             value: ConfigErrorValue::IOError(error),
         }
+    }
+}
+
+impl fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(&self.value, f)
     }
 }

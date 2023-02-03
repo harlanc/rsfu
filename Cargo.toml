@@ -1,2 +1,2 @@
 [workspace]
-members = ["rsfu", "app/rsfu_jrpc_server"]
+members = ["rsfu", "app/jrpc2-server"]

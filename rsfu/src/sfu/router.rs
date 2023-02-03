@@ -523,10 +523,10 @@ impl Router for RouterLocal {
         let transceiver =
             s.pc.add_transceiver_from_track(
                 down_track_arc.clone(),
-                Some(RTCRtpTransceiverInit {
+                &[RTCRtpTransceiverInit {
                     direction: RTCRtpTransceiverDirection::Sendonly,
                     send_encodings: Vec::new(),
-                }),
+                }],
             )
             .await?;
 
@@ -548,7 +548,7 @@ impl Router for RouterLocal {
                 let down_track_arc_in = down_track_arc_out.clone();
                 Box::pin(async move {
                     if s_in.pc.connection_state() != RTCPeerConnectionState::Closed {
-                        let rv = s_in.pc.remove_track(&transceiver_in.sender().await).await;
+                        let rv = s_in.pc.remove_track(&transceiver_in.sender().await.unwrap()).await;
                         match rv {
                             Ok(_) => {
                                 s_in.remove_down_track(r_in.stream_id(), down_track_arc_in)

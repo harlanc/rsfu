@@ -1,10 +1,10 @@
 use anyhow::Result;
+use jrpc2_server::server::server::JsonSignal;
 use jrpc2::jsonrpc2::JsonRpc2;
 use jrpc2::stream_ws::ServerObjectStream;
 use rsfu::sfu::peer::PeerLocal;
 use rsfu::sfu::sfu;
 use rsfu::sfu::sfu::SFU;
-use rsfu_jrpc_server::server::server::JsonSignal;
 use std::env;
 use std::sync::Arc;
 use tokio;
@@ -15,13 +15,14 @@ use tokio::sync::Mutex;
 #[tokio::main]
 async fn main() -> Result<()> {
     let config = sfu::load(&String::from(
-        "/Users/zexu/github/rsfu/app/rsfu_jrpc_server/src/config.toml",
+        "../../examples/echotest-jsonrpc/src/config.toml",
     ));
 
     match config {
-        Err(_) => {}
+        Err(err) => {
+            println!("configure error: {}", err);
+        }
         Ok(c) => {
-            println!("sdp: {}", c.webrtc.sdp_semantics);
             env::set_var("RUST_LOG", "info");
             env_logger::init();
 
@@ -29,11 +30,10 @@ async fn main() -> Result<()> {
             sfu.new_data_channel(String::from("rsfu")).await;
 
             let arc_sfu = Arc::new(Mutex::new(sfu));
-
             let addr = "127.0.0.1:7000";
             let listener = TcpListener::bind(&addr).await.expect("Can't listen");
 
-            log::info!("testsetst");
+            log::info!("listen: {}", addr);
 
             loop {
                 if let Ok((stream, _)) = listener.accept().await {

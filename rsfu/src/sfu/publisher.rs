@@ -14,7 +14,6 @@ use webrtc::peer_connection::signaling_state::RTCSignalingState;
 use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::rtp_transceiver::rtp_receiver::RTCRtpReceiver;
-use webrtc::rtp_transceiver::RTCRtpTransceiver;
 
 use super::receiver::WebRTCReceiver;
 use webrtc::peer_connection::configuration::RTCConfiguration;
@@ -162,9 +161,7 @@ impl Publisher {
         let peer_connection_out_2 = self.pc.clone();
 
         self.pc.on_track(Box::new(
-            move |track: Arc<TrackRemote>,
-                  receiver: Arc<RTCRtpReceiver>,
-                  _transceiver: Arc<RTCRtpTransceiver>| {
+            move |track: Option<Arc<TrackRemote>>, receiver: Option<Arc<RTCRtpReceiver>>| {
                 let router_in = Arc::clone(&router_out);
                 let router_in2 = Arc::clone(&router_out);
                 let session_in = Arc::clone(&session_out);
@@ -175,8 +172,8 @@ impl Publisher {
                 let peer_connection = peer_connection_out.clone();
 
                 Box::pin(async move {
-                    let receiver_val = receiver;
-                    let track_val = track;
+                    let receiver_val = receiver.unwrap();
+                    let track_val = track.unwrap();
                     let router = router_in;
                     let track_id = track_val.id().await;
                     let track_stream_id = track_val.stream_id().await;

@@ -248,29 +248,25 @@ impl PeerLocal {
             let sub = Arc::clone(&subscriber);
             let on_offer_handler_out = self.on_offer_handler.clone();
             let uuid_out = uuid.clone();
-            println!("on_offer 0");
-
+            
             subscriber
                 .on_negotiate(Box::new(move || {
                     let remote_answer_pending_in = remote_answer_pending_out.clone();
                     let negotiation_pending_in = negotiation_pending_out.clone();
                     let closed_in = closed_out.clone();
                     let uuid_clone = uuid_out.clone();
-
                     let sub_in = sub.clone();
                     let on_offer_handler_in = on_offer_handler_out.clone();
-                    println!("on_offer 1");
+
                     Box::pin(async move {
                         if remote_answer_pending_in.load(Ordering::Relaxed) {
-                            println!("on_offer 1.1");
                             (*negotiation_pending_in).store(true, Ordering::Relaxed);
                             return Ok(());
                         }
-                        println!("on_offer 1.2");
 
                         let offer = sub_in.create_offer().await?;
                         (*remote_answer_pending_in).store(true, Ordering::Relaxed);
-                        println!("on_offer 2");
+
                         if let Some(on_offer) = &mut *on_offer_handler_in.lock().await {
                             if !closed_in.load(Ordering::Relaxed) {
                                 log::info!("PeerLocal Send offer, peer_id: {}", uuid_clone);
