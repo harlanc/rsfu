@@ -1,7 +1,7 @@
 use anyhow::Result;
-use jrpc2_server::server::server::JsonSignal;
 use jrpc2::jsonrpc2::JsonRpc2;
 use jrpc2::stream_ws::ServerObjectStream;
+use jrpc2_server::server::server::JsonSignal;
 use rsfu::sfu::peer::PeerLocal;
 use rsfu::sfu::sfu;
 use rsfu::sfu::sfu::SFU;
@@ -14,18 +14,17 @@ use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let config = sfu::load(&String::from(
-        "../../examples/echotest-jsonrpc/src/config.toml",
-    ));
+    env::set_var("RUST_LOG", "info");
+    env_logger::init();
 
+    let config_path = String::from("./app/jrpc2-server/src/config.toml");
+    let config = sfu::load(&config_path);
     match config {
         Err(err) => {
-            println!("configure error: {}", err);
+            log::error!("configure error: {}", err);
+            log::warn!("please check the configure file path: {}", config_path);
         }
         Ok(c) => {
-            env::set_var("RUST_LOG", "info");
-            env_logger::init();
-
             let sfu = SFU::new(c).await.unwrap();
             sfu.new_data_channel(String::from("rsfu")).await;
 

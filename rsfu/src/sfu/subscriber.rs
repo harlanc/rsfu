@@ -194,11 +194,8 @@ impl Subscriber {
     }
 
     pub async fn create_offer(&self) -> Result<RTCSessionDescription> {
-        log::info!("crate_offer 0");
         let offer = self.pc.create_offer(None).await?;
-        log::info!("crate_offer 1");
         self.pc.set_local_description(offer.clone()).await?;
-        log::info!("crate_offer 2");
         Ok(offer)
     }
 

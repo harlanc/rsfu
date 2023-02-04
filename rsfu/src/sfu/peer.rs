@@ -248,7 +248,7 @@ impl PeerLocal {
             let sub = Arc::clone(&subscriber);
             let on_offer_handler_out = self.on_offer_handler.clone();
             let uuid_out = uuid.clone();
-            
+
             subscriber
                 .on_negotiate(Box::new(move || {
                     let remote_answer_pending_in = remote_answer_pending_out.clone();
