@@ -72,8 +72,8 @@ fn set_n_bits_of_u16(src: u16, size: u16, start_index: u16, val: u16) -> u16 {
         return 0;
     }
     // truncate val to size bits
-    let val2 = val & (1 << size) - 1;
-    return src | (val2 << (16 - size - start_index));
+    let val2 = val & ((1 << size) - 1);
+    src | (val2 << (16 - size - start_index))
 }
 
 impl Responder {
@@ -102,7 +102,7 @@ impl Responder {
     }
 
     pub async fn push(&mut self, sn: u16, time_ns: i64, marker: bool) {
-        if sn < 0x0fff && (self.last_sn & 0xffff) > 0xf000 {
+        if sn < 0x0fff && self.last_sn > 0xf000 {
             self.cycles += 1 << 16
         }
 
@@ -143,12 +143,8 @@ impl Responder {
             return Err(Error::ErrExtInfoEmpty.into());
         }
 
-        ext_infos.sort_by(|a, b| {
-            return b.ext_tsn.cmp(&a.ext_tsn);
-        });
-
+        ext_infos.sort_by(|a, b| b.ext_tsn.cmp(&a.ext_tsn));
         let mut tcc_pkts: Vec<RtpExtInfo> = Vec::new();
-
         for ext_info in ext_infos.iter() {
             if ext_info.ext_tsn < self.last_ext_sn {
                 continue;
@@ -181,7 +177,6 @@ impl Responder {
             let mut status = SymbolTypeTcc::PacketNotReceived;
 
             if stat.timestamp != 0 {
-                let delta: i64;
                 if !first_recv {
                     first_recv = true;
 
@@ -198,9 +193,9 @@ impl Responder {
                     self.pkt_ctn += 1;
                 }
 
-                delta = (stat.timestamp - timestamp) / 250;
+                let delta = (stat.timestamp - timestamp) / 250;
 
-                if delta < 0 || delta > 255 {
+                if !(0..=255).contains(&delta) {
                     status = SymbolTypeTcc::PacketReceivedLargeDelta;
                     let mut r_delta = delta as i16;
 
@@ -257,7 +252,7 @@ impl Responder {
                 same = true;
 
                 for i in 0..status_list.len() {
-                    status = status_list.get(i).unwrap().clone();
+                    status = *status_list.get(i).unwrap();
                     if status as u16 > max_status as u16 {
                         max_status = status;
                     }
@@ -282,7 +277,7 @@ impl Responder {
                 same = true;
             }
         }
-        if status_list.len() > 0 {
+        if !status_list.is_empty() {
             if same {
                 self.write_run_length_chunk(last_status as u16, status_list.len() as u16)?;
             } else if max_status == SymbolTypeTcc::PacketReceivedLargeDelta {
@@ -320,8 +315,8 @@ impl Responder {
 
         hdr.marshal_to(&mut raw_packet_data[..])?; //header
 
-        raw_packet_data.write(&self.payload[..])?;
-        raw_packet_data.write(&self.deltas[..])?;
+        raw_packet_data.write_all(&self.payload[..])?;
+        raw_packet_data.write_all(&self.deltas[..])?;
 
         if pad {
             raw_packet_data.write_u8(pad_size)?;

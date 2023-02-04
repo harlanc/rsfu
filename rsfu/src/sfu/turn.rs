@@ -73,7 +73,7 @@ impl AuthHandler for CustomAuthHandler {
         if let Some(val) = self.users_map.get(&username.to_string()) {
             return Ok(val.clone());
         }
-        log::trace!("realm val: {}",realm);
+        log::trace!("realm val: {}", realm);
 
         Err(Error::ErrNilConn)
     }
@@ -105,7 +105,7 @@ pub(super) async fn init_turn_server(
                 );
             }
 
-            if users_map.len() == 0 {
+            if users_map.is_empty() {
                 log::error!("no turn auth provided.");
             }
 
@@ -125,8 +125,7 @@ pub(super) async fn init_turn_server(
 
     let addr: Vec<&str> = conf.address.split(':').collect();
 
-    let mut conn_configs = Vec::new();
-    conn_configs.push(ConnConfig {
+    let conn_configs = vec![ConnConfig {
         conn,
         relay_addr_generator: Box::new(RelayAddressGeneratorRanges {
             min_port,
@@ -136,7 +135,7 @@ pub(super) async fn init_turn_server(
             address: "0.0.0.0".to_owned(),
             net: Arc::new(Net::new(Some(NetConfig::default()))),
         }),
-    });
+    }];
 
     let turn_server = TurnServer::new(ServerConfig {
         conn_configs,

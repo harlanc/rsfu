@@ -50,8 +50,8 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 #[allow(dead_code)]
-const SIGNALER_LABEL: &'static str = "rsfu_relay_signaler";
-const SIGNALER_REQUEST_EVENT: &'static str = "rsfu_relay_request";
+const SIGNALER_LABEL: &str = "rsfu_relay_signaler";
+const SIGNALER_REQUEST_EVENT: &str = "rsfu_relay_request";
 
 const SEED: [u8; 32] = [
     1, 0, 0, 0, 23, 0, 0, 0, 200, 1, 0, 0, 210, 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -432,7 +432,7 @@ impl Peer {
     }
 
     pub fn get_local_tracks(&self) -> Vec<Arc<dyn TrackLocal + Send + Sync>> {
-        return self.local_tracks.clone();
+        self.local_tracks.clone()
     }
 
     pub async fn on_ready(&self, f: OnPeerReadyFn) {
@@ -730,18 +730,18 @@ impl Peer {
         tokio::select! {
             _ = timer.as_mut() =>{
                 self.pending_requests.lock().await.remove(&req.id);
-                return Err(Error::ErrRelayRequestTimeout.into());
+                Err(Error::ErrRelayRequestTimeout.into())
             },
             data = event_consumer.recv() => {
                 self.pending_requests.lock().await.remove(&req.id);
 
                 if let Some(payload)  = data{
-                    return Ok(payload);
+                    Ok(payload)
                 }else{
-                    return Err(Error::ErrRelayRequestEmptyRespose.into());
+                    Err(Error::ErrRelayRequestEmptyRespose.into())
                 }
             },
-        };
+        }
     }
 
     pub async fn reply(&mut self, id: u64, event: String, payload: &[u8]) -> Result<()> {

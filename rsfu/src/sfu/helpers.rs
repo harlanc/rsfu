@@ -125,7 +125,7 @@ pub fn codec_parameters_fuzzy_search(
         }
     }
 
-    Err(WebrtcError::ErrCodecNotFound.into())
+    Err(WebrtcError::ErrCodecNotFound)
 }
 
 #[allow(dead_code)]

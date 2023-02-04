@@ -71,7 +71,7 @@ pub struct DownTrackInternal {
 
 impl PartialEq for DownTrackInternal {
     fn eq(&self, other: &Self) -> bool {
-        return (self.stream_id == other.stream_id) && (self.id == other.id);
+        (self.stream_id == other.stream_id) && (self.id == other.id)
     }
 
     // fn ne(&self, other: &Self) -> bool {
@@ -214,7 +214,7 @@ impl DownTrackInternal {
             }
         }
 
-        if fwd_pkts.len() > 0 {
+        if !fwd_pkts.is_empty() {
             if let Err(err) = receiver.send_rtcp(fwd_pkts) {
                 log::error!("send_rtcp err:{}", err);
             }
@@ -251,7 +251,7 @@ impl TrackLocal for DownTrackInternal {
         let enabled = self.enabled.load(Ordering::Relaxed);
         let last_ssrc = self.last_ssrc.load(Ordering::Relaxed);
 
-        let ssrc_val = ssrc.clone();
+        let ssrc_val = *ssrc;
 
         let sequencer = self.sequencer.clone();
         let receiver = self.receiver.clone();

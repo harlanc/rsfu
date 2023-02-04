@@ -1,13 +1,13 @@
 #[cfg(test)]
 mod tests {
 
+    use crate::twcc::twcc::Responder;
     use rtcp::header;
     use rtcp::header::Header;
     use rtcp::header::PacketType;
     use rtcp::transport_feedbacks::transport_layer_cc::SymbolSizeTypeTcc;
     use rtcp::transport_feedbacks::transport_layer_cc::SymbolTypeTcc;
     use webrtc_util::Marshal;
-    use crate::twcc::twcc::Responder;
 
     #[test]
     fn test_run_length_chunk() {
@@ -130,7 +130,6 @@ mod tests {
                 },
 
                 want_bytes: vec![0x0, 0xcd, 0x50],
-                ..Default::default()
             },
         ];
 
@@ -142,12 +141,8 @@ mod tests {
                 t.payload.push(0);
             }
 
-            let mut idx = 0;
-
-            for symbol in test.args.symbols {
-                t.create_status_symbol_chunk(test.args.symbol_size, symbol as u16, idx);
-
-                idx += 1;
+            for (idx, symbol) in test.args.symbols.into_iter().enumerate() {
+                t.create_status_symbol_chunk(test.args.symbol_size, symbol as u16, idx as u16);
             }
 
             let rv = t.write_status_symbol_chunk(test.args.symbol_size);
@@ -200,7 +195,6 @@ mod tests {
                 },
 
                 want_bytes: vec![0, 0xFF],
-                ..Default::default()
             },
             Test {
                 name: String::from("Must set correct large delta"),
@@ -221,7 +215,6 @@ mod tests {
                 },
 
                 want_bytes: vec![0, 0x80, 0x00],
-                ..Default::default()
             },
         ];
 
@@ -343,13 +336,13 @@ mod tests {
         assert!(rv.is_ok());
 
         for (i, v) in symbol1.iter().enumerate() {
-            t.create_status_symbol_chunk(SymbolSizeTypeTcc::OneBit, v.clone() as u16, i as u16);
+            t.create_status_symbol_chunk(SymbolSizeTypeTcc::OneBit, *v as u16, i as u16);
         }
         rv = t.write_status_symbol_chunk(SymbolSizeTypeTcc::OneBit);
         assert!(rv.is_ok());
 
         for (i, v) in symbol2.iter().enumerate() {
-            t.create_status_symbol_chunk(SymbolSizeTypeTcc::TwoBit, v.clone() as u16, i as u16);
+            t.create_status_symbol_chunk(SymbolSizeTypeTcc::TwoBit, *v as u16, i as u16);
         }
 
         rv = t.write_status_symbol_chunk(SymbolSizeTypeTcc::TwoBit);

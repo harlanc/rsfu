@@ -1,9 +1,9 @@
 use serde::Deserialize;
 use std::time::SystemTime;
 
-pub const QUARTER_RESOLUTION: &'static str = "q";
-pub const HALF_RESOLUTION: &'static str = "h";
-pub const FULL_RESOLUTION: &'static str = "f";
+pub const QUARTER_RESOLUTION: &str = "q";
+pub const HALF_RESOLUTION: &str = "h";
+pub const FULL_RESOLUTION: &str = "f";
 #[derive(Default, Clone, Deserialize)]
 pub struct SimulcastConfig {
     #[serde(rename = "bestqualityfirst")]

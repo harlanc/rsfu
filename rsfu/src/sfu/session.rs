@@ -26,7 +26,7 @@ use super::subscriber::API_CHANNEL_LABEL;
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-const AUDIO_LEVELS_METHOD: &'static str = "audioLevels";
+const AUDIO_LEVELS_METHOD: &str = "audioLevels";
 
 pub type OnCloseFn =
     Box<dyn (FnMut() -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>) + Send + Sync>;
@@ -108,11 +108,7 @@ impl SessionLocal {
     #[allow(dead_code)]
     async fn get_relay_peer(&self, peer_id: String) -> Option<Arc<RelayPeer>> {
         let relay_peers = self.relay_peers.lock().await;
-        if let Some(relay_peer) = relay_peers.get(&peer_id) {
-            Some(relay_peer.clone())
-        } else {
-            None
-        }
+        relay_peers.get(&peer_id).cloned()
     }
 
     async fn close(&self) {
@@ -392,7 +388,7 @@ impl Session for SessionLocal {
 
         let peers = self.peers.lock().await;
 
-        for (_, cur_peer) in &*peers {
+        for cur_peer in (*peers).values() {
             //	Logger.V(0).Info("Subscribe to publisher streams...........", "peer_id", p.ID())
 
             if cur_peer.id().await == peer.id().await || cur_peer.publisher().await.is_none() {
@@ -456,14 +452,14 @@ impl Session for SessionLocal {
     async fn peers(&self) -> Vec<Arc<dyn Peer + Send + Sync>> {
         let mut peers: Vec<Arc<dyn Peer + Send + Sync>> = Vec::new();
         let peers_val = self.peers.lock().await;
-        for (_, v) in &*peers_val {
+        for v in (*peers_val).values() {
             peers.push(v.clone());
         }
         peers
     }
     async fn relay_peers(&self) -> Vec<Arc<RelayPeer>> {
         let mut relay_peers: Vec<Arc<RelayPeer>> = Vec::new();
-        for (_, v) in &*self.relay_peers.lock().await {
+        for v in (*self.relay_peers.lock().await).values() {
             relay_peers.push(v.clone());
         }
         relay_peers

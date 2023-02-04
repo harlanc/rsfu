@@ -115,15 +115,12 @@ impl WebRTCTransportConfig {
 
         if let Some(ice_single_port) = c.webrtc.ice_single_port {
             let rv = UdpSocket::bind(("0.0.0.0", ice_single_port as u16)).await;
-            let udp_socket: UdpSocket;
-            match rv {
-                Ok(sock) => {
-                    udp_socket = sock;
-                }
+            let udp_socket: UdpSocket = match rv {
+                Ok(sock) => sock,
                 Err(_) => {
                     std::process::exit(0);
                 }
-            }
+            };
             let udp_mux = UDPMuxDefault::new(UDPMuxParams::new(udp_socket));
             se.set_udp_network(UDPNetwork::Muxed(udp_mux));
         } else {
@@ -199,7 +196,7 @@ impl WebRTCTransportConfig {
 
         let mut w = WebRTCTransportConfig {
             configuration: RTCConfiguration {
-                ice_servers: ice_servers,
+                ice_servers,
                 ..Default::default()
             },
             setting: se,
@@ -208,7 +205,7 @@ impl WebRTCTransportConfig {
         };
 
         if let Some(nat1toiips) = &c.webrtc.candidates.nat1_to_1ips {
-            if nat1toiips.len() > 0 {
+            if !nat1toiips.is_empty() {
                 w.setting
                     .set_nat_1to1_ips(nat1toiips.clone(), RTCIceCandidateType::Host);
             }
@@ -236,7 +233,7 @@ impl SFU {
         let mut sfu = SFU {
             webrtc: w,
             sessions: Arc::new(Mutex::new(HashMap::new())),
-            with_status: with_status,
+            with_status,
             ..Default::default()
         };
 

@@ -123,7 +123,7 @@ impl VP8 {
 }
 
 pub fn is_h264_keyframe(payload: &[u8]) -> bool {
-    if payload.len() < 1 {
+    if payload.is_empty() {
         return false;
     }
     let nalu = payload[0] & 0x1F;
@@ -181,5 +181,5 @@ pub fn is_h264_keyframe(payload: &[u8]) -> bool {
         }
         return payload[1] & 0x1F == 7;
     }
-    return false;
+    false
 }

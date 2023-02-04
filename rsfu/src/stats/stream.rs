@@ -108,7 +108,7 @@ impl Stream {
         let prometheus_handler = PrometheusHandler::new();
 
         Self {
-            buffer: buffer,
+            buffer,
             cname: Arc::new(Mutex::new(String::default())),
             drift_in_millis: AtomicU64::default(),
             stats: Arc::new(Mutex::new(StreamStats::default())),

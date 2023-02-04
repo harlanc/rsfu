@@ -124,7 +124,7 @@ impl Peer for PeerLocal {
 
 impl PeerLocal {
     pub fn new(provider: Arc<Mutex<dyn SessionProvider + Send + Sync>>) -> PeerLocal {
-        let peer_local = PeerLocal {
+        Self {
             id: Arc::new(Mutex::new(String::from(""))),
             session: Arc::new(Mutex::new(None)),
             closed: Arc::new(AtomicBool::new(false)),
@@ -138,9 +138,7 @@ impl PeerLocal {
 
             remote_answer_pending: Arc::new(AtomicBool::new(false)),
             negotiation_pending: Arc::new(AtomicBool::new(false)),
-        };
-
-        peer_local
+        }
     }
 
     // pub async fn join_after(self: &Arc<Mutex<Self>>) {
@@ -177,7 +175,7 @@ impl PeerLocal {
         }
 
         let mut uuid: String = uid.clone();
-        if uid == String::from("") {
+        if uid == *"" {
             uuid = Uuid::new_v4().to_string();
         }
 
@@ -362,7 +360,7 @@ impl PeerLocal {
             log::info!("PeerLocal send answer, peer_id :{}", self.id().await);
             rv
         } else {
-            return Err(Error::ErrNoTransportEstablished.into());
+            Err(Error::ErrNoTransportEstablished.into())
         }
     }
 

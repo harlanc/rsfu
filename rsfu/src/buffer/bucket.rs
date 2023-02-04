@@ -63,13 +63,13 @@ impl Bucket {
         let p = self.get(sn);
 
         if p.is_none() {
-            return Err(Error::ErrPacketNotFound.into());
+            return Err(Error::ErrPacketNotFound);
         }
 
         let i = p.clone().unwrap().len();
 
         if buf.len() < i {
-            return Err(Error::ErrBufferTooSmall.into());
+            return Err(Error::ErrBufferTooSmall);
         }
 
         if let Some(data) = p {
@@ -83,7 +83,7 @@ impl Bucket {
         let pkt_len = pkt.len();
         let pkt_len_idx = self.step as usize * MAX_PACKET_SIZE;
         if self.buf.capacity() < pkt_len_idx + pkt_len {
-            return Err(Error::ErrBufferTooSmall.into());
+            return Err(Error::ErrBufferTooSmall);
         }
         BigEndian::write_u16(&mut self.buf[pkt_len_idx..], pkt_len as u16);
 
@@ -105,7 +105,7 @@ impl Bucket {
 
         let mut pos = self.step - (diff + 1) as i32;
         if pos < 0 {
-            if pos * -1 > self.max_steps + 1 {
+            if -pos > self.max_steps + 1 {
                 return None;
             }
             pos = self.max_steps + pos + 1;
@@ -128,8 +128,8 @@ impl Bucket {
 
     fn set(&mut self, sn: u16, pkt: &[u8]) -> Result<Vec<u8>> {
         let diff: u16 = distance(self.head_sn, sn);
-        if diff >= self.max_steps as u16 + 1 {
-            return Err(Error::ErrPacketTooOld.into());
+        if diff > self.max_steps as u16 {
+            return Err(Error::ErrPacketTooOld);
         }
         let mut pos = self.step - (diff + 1) as i32;
         if pos < 0 {
@@ -138,11 +138,11 @@ impl Bucket {
 
         let off = pos * MAX_PACKET_SIZE as i32;
         if off > self.buf.len() as i32 || off < 0 {
-            return Err(Error::ErrPacketTooOld.into());
+            return Err(Error::ErrPacketTooOld);
         }
 
         if BigEndian::read_u16(&self.buf[off as usize + 4..]) == sn {
-            return Err(Error::ErrRTXPacket.into());
+            return Err(Error::ErrRTXPacket);
         }
 
         let pkt_len = pkt.len();
@@ -171,7 +171,7 @@ mod tests {
         // print!("data is :{:02x}\n", rv);
 
         for i in datas {
-            println!("data is-- :{:02x}\n", i);
+            println!("data is-- :{:02x}", i);
         }
     }
 }

@@ -93,8 +93,7 @@ pub struct DownTrack {
 
 impl PartialEq for DownTrack {
     fn eq(&self, other: &Self) -> bool {
-        return (self.peer_id == other.peer_id)
-            && (self.down_track_local == other.down_track_local);
+        (self.peer_id == other.peer_id) && (self.down_track_local == other.down_track_local)
     }
 }
 
@@ -106,7 +105,7 @@ impl DownTrack {
         mt: i32,
     ) -> Self {
         Self {
-            peer_id: peer_id,
+            peer_id,
             track_type: Mutex::new(DownTrackType::SimpleDownTrack),
             payload: Vec::new(),
             current_spatial_layer: AtomicI32::new(0),
@@ -131,7 +130,7 @@ impl DownTrack {
 
     pub(super) fn new_track_local(peer_id: String, track: Arc<DownTrackInternal>) -> Self {
         Self {
-            peer_id: peer_id,
+            peer_id,
             track_type: Mutex::new(DownTrackType::SimpleDownTrack),
             payload: Vec::new(),
 
@@ -289,9 +288,9 @@ impl DownTrack {
                     //return Err(WEBRTCError::new(String::from("error spatial layer busy..")));
                     //return Err(ErrWebRTC::)
 
-                    return Err(Error::ErrWebRTC(
-                        WEBRTCError::new(String::from("error spatial layer busy..")).into(),
-                    ));
+                    return Err(Error::ErrWebRTC(WEBRTCError::new(String::from(
+                        "error spatial layer busy..",
+                    ))));
                 }
                 let receiver = &self.down_track_local.receiver;
                 match receiver
@@ -306,11 +305,15 @@ impl DownTrack {
                                 .store(target_layer, Ordering::Relaxed);
                         }
                     }
-                    _ => {}
+                    Err(err) => {
+                        log::error!("switch_down_track err: {}", err);
+                    }
                 }
                 return Ok(());
             }
-            _ => {}
+            _ => {
+                log::info!("other downtracks");
+            }
         }
 
         Err(Error::ErrWebRTC(WEBRTCError::new(String::from(
@@ -332,35 +335,31 @@ impl DownTrack {
                 let mut max_found: u16 = 0;
                 let mut layer_found: bool = false;
 
-                for target in available_layers.to_vec() {
+                for target in available_layers.iter().copied() {
                     if target <= max_layer {
                         if target > max_found {
                             max_found = target;
                             layer_found = true;
                         }
-                    } else {
-                        if min_found > target {
-                            min_found = target;
-                        }
+                    } else if min_found > target {
+                        min_found = target;
                     }
                 }
 
-                let target_layer;
-                if layer_found {
-                    target_layer = max_found;
-                } else {
-                    target_layer = min_found;
-                }
+                let target_layer = if layer_found { max_found } else { min_found };
 
                 if current_layer != target_layer {
-                    if let Err(_) = self.switch_spatial_layer(target_layer as i32, false).await {
+                    if let Err(err) = self.switch_spatial_layer(target_layer as i32, false).await {
+                        log::error!("switch_spatial_layer err: {}", err);
                         return Ok(target_layer as i64);
                     }
                 }
 
                 return Ok(target_layer as i64);
             }
-            _ => {}
+            _ => {
+                log::trace!("untrack_layers_change other DownTrackType");
+            }
         }
 
         Err(Error::ErrWebRTC(WEBRTCError::new(format!(
@@ -391,7 +390,9 @@ impl DownTrack {
                 }
             }
 
-            _ => {}
+            _ => {
+                log::trace!("switch_temporal_layer other DownTrackType");
+            }
         }
     }
 
@@ -410,7 +411,7 @@ impl DownTrack {
         }
 
         let mid = self.transceiver.as_ref().unwrap().mid().await;
-        let ssrc = self.down_track_local.ssrc.lock().await.clone();
+        let ssrc = *self.down_track_local.ssrc.lock().await;
 
         Some(vec![
             SourceDescriptionChunk {
@@ -457,10 +458,10 @@ impl DownTrack {
 
         let (octets, packets) = self.get_sr_status();
 
-        let ssrc = self.down_track_local.ssrc.lock().await.clone();
+        let ssrc = *self.down_track_local.ssrc.lock().await;
 
         Some(SenderReport {
-            ssrc: ssrc,
+            ssrc,
             ntp_time: u64::from(now_ntp),
             rtp_time: sr_rtp + diff,
             packet_count: packets,
@@ -475,9 +476,9 @@ impl DownTrack {
     }
 
     async fn write_simple_rtp(&self, packet: ExtPacket) -> Result<()> {
-        let cur_payload_type = self.down_track_local.payload_type.lock().await.clone();
+        let cur_payload_type = *self.down_track_local.payload_type.lock().await;
         let mut ext_packet = packet.clone();
-        let ssrc = self.down_track_local.ssrc.lock().await.clone();
+        let ssrc = *self.down_track_local.ssrc.lock().await;
 
         if self.down_track_local.re_sync.load(Ordering::Relaxed) {
             match self.down_track_local.kind() {
@@ -497,7 +498,9 @@ impl DownTrack {
                         return Ok(());
                     }
                 }
-                _ => {}
+                _ => {
+                    log::trace!("write_simple_rtp other RTPCodecType");
+                }
             }
 
             if *self.last_sn.lock().await != 0 {
@@ -561,7 +564,7 @@ impl DownTrack {
             return Ok(());
         }
 
-        let ssrc = self.down_track_local.ssrc.lock().await.clone();
+        let ssrc = *self.down_track_local.ssrc.lock().await;
 
         let last_ssrc = self.down_track_local.last_ssrc.load(Ordering::Relaxed);
         let temporal_supported: bool;
@@ -585,7 +588,7 @@ impl DownTrack {
 
                 if simulcast.temporal_supported {
                     let mime = self.down_track_local.mime.lock().await.clone();
-                    if mime == String::from("video/vp8") {
+                    if mime == *"video/vp8" {
                         let vp8 = ext_packet.payload;
                         simulcast.p_ref_pic_id = simulcast.l_pic_id;
                         simulcast.ref_pic_id = vp8.picture_id;
@@ -618,7 +621,7 @@ impl DownTrack {
                 let mut last_sn = self.last_sn.lock().await;
                 *last_sn = ext_packet.packet.header.sequence_number;
                 let mime = self.down_track_local.mime.lock().await.clone();
-                if mime == String::from("video/vp8") {
+                if mime == *"video/vp8" {
                     let vp8 = ext_packet.payload;
                     simulcast.temporal_supported = vp8.temporal_supported;
                 }
@@ -634,7 +637,7 @@ impl DownTrack {
 
         if temporal_supported {
             let mime = self.down_track_local.mime.lock().await.clone();
-            if mime == String::from("video/vp8") {
+            if mime == *"video/vp8" {
                 let (_a, _b, _c, _d) =
                     helpers::set_vp8_temporal_layer(ext_packet.clone(), self).await;
             }
@@ -659,7 +662,7 @@ impl DownTrack {
         hdr.sequence_number = new_sn;
         hdr.timestamp = new_ts;
         hdr.ssrc = ssrc;
-        hdr.payload_type = self.down_track_local.payload_type.lock().await.clone();
+        hdr.payload_type = *self.down_track_local.payload_type.lock().await;
 
         let write_stream_val = self.down_track_local.write_stream.lock().await;
         if let Some(write_stream) = &*write_stream_val {
@@ -696,8 +699,7 @@ impl DownTrack {
 
                 if max_rate_packet_loss <= 5 {
                     if current_temporal_layer < mctl
-                        && current_temporal_layer + 1
-                            <= self.max_temporal_layer.load(Ordering::Relaxed)
+                        && current_temporal_layer < self.max_temporal_layer.load(Ordering::Relaxed)
                         && expected_min_bitrate >= 3 * cbr / 4
                     {
                         self.switch_temporal_layer(target_temporal_layer + 1, false)
@@ -707,9 +709,8 @@ impl DownTrack {
 
                     if current_temporal_layer >= mctl
                         && expected_min_bitrate >= 3 * cbr / 2
-                        && current_spatial_layer + 1
-                            <= self.max_spatial_layer.load(Ordering::Relaxed)
-                        && current_spatial_layer + 1 <= 2
+                        && current_spatial_layer < self.max_spatial_layer.load(Ordering::Relaxed)
+                        && current_spatial_layer < 2
                     {
                         match self
                             .switch_spatial_layer(current_spatial_layer + 1, false)
@@ -718,7 +719,9 @@ impl DownTrack {
                             Ok(_) => {
                                 self.switch_temporal_layer(0, false).await;
                             }
-                            Err(_) => {}
+                            Err(err) => {
+                                log::error!("switch_spatial_layer err: {}", err);
+                            }
                         }
 
                         simulcast.switch_delay = SystemTime::now() + Duration::from_secs(5);
@@ -742,7 +745,9 @@ impl DownTrack {
                                 )
                                 .await;
                             }
-                            Ok(_) => {}
+                            Ok(_) => {
+                                log::trace!("switch_spatial_layer OK");
+                            }
                         }
                         simulcast.switch_delay = SystemTime::now() + Duration::from_secs(10);
                     } else {
@@ -781,11 +786,11 @@ impl TrackLocal for DownTrack {
     }
 
     fn id(&self) -> &str {
-        &self.down_track_local.id()
+        self.down_track_local.id()
     }
 
     fn stream_id(&self) -> &str {
-        &self.down_track_local.stream_id()
+        self.down_track_local.stream_id()
     }
 
     fn kind(&self) -> RTPCodecType {

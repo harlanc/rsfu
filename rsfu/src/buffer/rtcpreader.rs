@@ -47,7 +47,7 @@ impl RTCPReader {
     }
     pub async fn write(&mut self, p: Vec<u8>) -> Result<u32> {
         if self.closed.load(Ordering::Relaxed) {
-            return Err(Error::ErrIOEof.into());
+            return Err(Error::ErrIOEof);
         }
 
         // let mut handler = on_track_handler.lock().await;

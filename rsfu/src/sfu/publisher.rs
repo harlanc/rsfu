@@ -130,7 +130,7 @@ impl Publisher {
             pc: Arc::new(pc),
             cfg: config_clone,
             router: Arc::new(RouterLocal::new(id, session.clone(), router)),
-            session: session,
+            session,
             tracks: Arc::new(Mutex::new(Vec::new())),
             relayed: AtomicBool::new(false),
             relay_peers: Arc::new(Mutex::new(Vec::new())),
@@ -146,14 +146,14 @@ impl Publisher {
     }
 
     async fn on_track(&mut self) {
-        let router_out = Arc::clone(&mut self.router);
-        let router_out_2 = Arc::clone(&mut self.router);
-        let session_out = Arc::clone(&mut self.session);
-        let session_out_2 = Arc::clone(&mut self.session);
-        let tracks_out = Arc::clone(&mut self.tracks);
-        let relay_peer_out = Arc::clone(&mut self.relay_peers);
-        let relay_peer_out_2 = Arc::clone(&mut self.relay_peers);
-        let factory_out = Arc::clone(&mut self.cfg.factory);
+        let router_out = Arc::clone(&self.router);
+        let router_out_2 = Arc::clone(&self.router);
+        let session_out = Arc::clone(&self.session);
+        let session_out_2 = Arc::clone(&self.session);
+        let tracks_out = Arc::clone(&self.tracks);
+        let relay_peer_out = Arc::clone(&self.relay_peers);
+        let relay_peer_out_2 = Arc::clone(&self.relay_peers);
+        let factory_out = Arc::clone(&self.cfg.factory);
         let peer_id_out = self.id.clone();
         let peer_id_out_2 = self.id.clone();
         let max_packet_track = self.cfg.router.max_packet_track;
@@ -473,7 +473,7 @@ impl Publisher {
 
                                 }
                         }
-                        if rpkts.len() > 0 {
+                        if !rpkts.is_empty() {
                             match pc_in.write_rtcp(&pkts[..]).await {
                                 Ok(_) => {}
                                 Err(_) => {}
@@ -489,7 +489,11 @@ impl Publisher {
             downtrack_arc
                 .on_close_handler(Box::new(move || {
                     let sdr_in = sdr_out.clone();
-                    Box::pin(async move { if let Err(_) = sdr_in.stop().await {} })
+                    Box::pin(async move {
+                        if let Err(err) = sdr_in.stop().await {
+                            log::error!("stop error:{}", err);
+                        }
+                    })
                 }))
                 .await;
 
@@ -542,7 +546,7 @@ impl Publisher {
                 }
             }
 
-            if rtcp_packets.len() == 0 {
+            if rtcp_packets.is_empty() {
                 continue;
             }
 

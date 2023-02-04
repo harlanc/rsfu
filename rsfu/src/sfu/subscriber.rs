@@ -33,14 +33,14 @@ use super::sfu::WebRTCTransportConfig;
 use super::errors::Result;
 use webrtc::rtp_transceiver::rtp_codec::{RTCRtpCodecCapability, RTCRtpCodecParameters};
 
-const HIGH_VALUE: &'static str = "high";
-const MEDIA_VALUE: &'static str = "medium";
-const LOW_VALUE: &'static str = "low";
-const MUTED_VALUE: &'static str = "none";
+const HIGH_VALUE: &str = "high";
+const MEDIA_VALUE: &str = "medium";
+const LOW_VALUE: &str = "low";
+const MUTED_VALUE: &str = "none";
 #[allow(dead_code)]
-const ACTIVE_LAYER_METHOD: &'static str = "activeLayer";
+const ACTIVE_LAYER_METHOD: &str = "activeLayer";
 
-pub const API_CHANNEL_LABEL: &'static str = "rsfu";
+pub const API_CHANNEL_LABEL: &str = "rsfu";
 
 pub type OnNegotiateFn =
     Box<dyn (FnMut() -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>) + Send + Sync>;
@@ -204,7 +204,7 @@ impl Subscriber {
     }
 
     pub async fn add_ice_candidate(&self, candidate: RTCIceCandidateInit) -> Result<()> {
-        if let Some(_) = self.pc.remote_description().await {
+        if self.pc.remote_description().await.is_some() {
             self.pc.add_ice_candidate(candidate).await?;
             return Ok(());
         }
@@ -279,7 +279,7 @@ impl Subscriber {
     #[allow(dead_code)]
     async fn downtracks(&self) -> Vec<Arc<DownTrack>> {
         let mut downtracks: Vec<Arc<DownTrack>> = Vec::new();
-        for (_, v) in &mut *self.tracks.lock().await {
+        for v in (*self.tracks.lock().await).values_mut() {
             downtracks.append(v);
         }
 
@@ -287,11 +287,7 @@ impl Subscriber {
     }
 
     pub async fn get_downtracks(&self, stream_id: String) -> Option<Vec<Arc<DownTrack>>> {
-        if let Some(val) = self.tracks.lock().await.get(&stream_id) {
-            Some(val.clone())
-        } else {
-            None
-        }
+        self.tracks.lock().await.get(&stream_id).cloned()
     }
 
     pub async fn negotiate(&self) -> Result<()> {
@@ -397,7 +393,7 @@ impl Subscriber {
             }
         }
 
-        if sds.len() == 0 {
+        if sds.is_empty() {
             return;
         }
 
@@ -451,7 +447,7 @@ async fn process(msg: DataChannelMessage, down_tracks: Vec<Arc<DownTrack>>) {
     //     .clone()
     //     .unwrap();
 
-    if !set_remote_media.layers.is_none() && set_remote_media.layers.unwrap().len() > 0 {
+    if set_remote_media.layers.is_some() && !set_remote_media.layers.unwrap().is_empty() {
     } else {
         for dt_val in down_tracks {
             // let mut dt_val = dt.lock().await;

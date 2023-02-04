@@ -36,17 +36,16 @@ impl NackQueue {
              }| seq_number,
         );
 
-        let insert_index: usize;
-        match rv {
+        let insert_index: usize = match rv {
             Ok(_) => {
                 /*exists then return*/
                 return;
             }
             Err(index) => {
                 /*not exists then insert the new nack*/
-                insert_index = index;
+                index
             }
-        }
+        };
 
         let nack = Nack::new(sn, 0);
         self.nacks.insert(insert_index, nack);
@@ -73,7 +72,7 @@ impl NackQueue {
     // RTCP Transport Feedback NACK BLP: 0xffff (Frames 9314 9315 9316 9317 9318 9319 9320 9321 9322 9323 9324 9325 9326 9327 9328 9329 lost)
 
     pub fn pairs(&mut self, head_seq_number: u32) -> (Option<Vec<NackPair>>, bool) {
-        if self.nacks.len() == 0 {
+        if self.nacks.is_empty() {
             return (None, false);
         }
 
@@ -83,7 +82,7 @@ impl NackQueue {
         };
         let mut nps: Vec<NackPair> = Vec::new();
         let mut ask_key_frame: bool = false;
-        let mut idx = 0 as usize;
+        let mut idx = 0_usize;
 
         while idx < self.nacks.len() {
             let v = &mut self.nacks[idx];
@@ -98,17 +97,19 @@ impl NackQueue {
                 continue;
             }
 
-            idx = idx + 1;
+            idx += 1;
 
             if v.seq_number >= head_seq_number - 2 {
                 continue;
             }
 
-            v.nackd = v.nackd + 1;
+            v.nackd += 1;
 
             if np.packet_id == 0 || v.seq_number as u16 > np.packet_id + 16 {
                 if np.packet_id != 0 {
-                    nps.push(np.clone());
+                    // note: `#[warn(clippy::clone_on_copy)]` on by default
+                    //help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#clone_on_copy
+                    nps.push(np);
                 }
 
                 np.packet_id = v.seq_number as u16;
@@ -117,7 +118,7 @@ impl NackQueue {
                 continue;
             }
 
-            np.lost_packets = np.lost_packets | 1 << (v.seq_number as u16 - np.packet_id - 1);
+            np.lost_packets |= 1 << (v.seq_number as u16 - np.packet_id - 1);
         }
 
         if np.packet_id != 0 {
@@ -147,9 +148,9 @@ mod tests {
         assert_eq!(4, nack_queue.nacks[2].seq_number);
         assert_eq!(36, nack_queue.nacks[3].seq_number);
 
-        for i in 1..1 {
-            println!("number:{}", i);
-        }
+        // for i in 1..1 {
+        //     println!("number:{}", i);
+        // }
     }
 
     #[test]

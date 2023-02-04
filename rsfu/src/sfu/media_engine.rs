@@ -7,12 +7,12 @@ use webrtc::rtp_transceiver::rtp_codec::RTCRtpHeaderExtensionCapability;
 use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
 use webrtc::rtp_transceiver::RTCPFeedback;
 
-const MIME_TYPE_H264: &'static str = "video/h264";
-const MIME_TYPE_OPUS: &'static str = "audio/opus";
-const MIME_TYPE_VP8: &'static str = "video/vp8";
-const MIME_TYPE_VP9: &'static str = "video/vp9";
+const MIME_TYPE_H264: &str = "video/h264";
+const MIME_TYPE_OPUS: &str = "audio/opus";
+const MIME_TYPE_VP8: &str = "video/vp8";
+const MIME_TYPE_VP9: &str = "video/vp9";
 
-const FRAME_MARKING: &'static str = "urn:ietf:params:rtp-hdrext:framemarking";
+const FRAME_MARKING: &str = "urn:ietf:params:rtp-hdrext:framemarking";
 
 pub(super) async fn get_publisher_media_engine() -> Result<MediaEngine> {
     let mut me = MediaEngine::default();
@@ -142,7 +142,7 @@ pub(super) async fn get_publisher_media_engine() -> Result<MediaEngine> {
                 sdp_fmtp_line: String::from(
                     "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=640032",
                 ),
-                rtcp_feedback: feedbacks.clone(),
+                rtcp_feedback: feedbacks,
                 ..Default::default()
             },
             payload_type: 123,

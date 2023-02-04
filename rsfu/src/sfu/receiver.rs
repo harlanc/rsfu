@@ -107,12 +107,12 @@ impl WebRTCReceiver {
         let (s, _) = mpsc::unbounded_channel();
         Self {
             peer_id: pid,
-            receiver: receiver,
+            receiver,
             track_id: track.id().await,
             stream_id: track.stream_id().await,
             codec: track.codec().await,
             kind: track.kind(),
-            is_simulcast: track.rid().len() > 0,
+            is_simulcast: !track.rid().is_empty(),
             closed: AtomicBool::default(),
             bandwidth: 0,
             last_pli: AtomicU64::default(),
@@ -185,21 +185,12 @@ impl Receiver for WebRTCReceiver {
             return None;
         }
 
-        let layer: usize;
-        match track.rid() {
-            simulcast::FULL_RESOLUTION => {
-                layer = 2;
-            }
-            simulcast::HALF_RESOLUTION => {
-                layer = 1;
-            }
-            simulcast::QUARTER_RESOLUTION => {
-                layer = 0;
-            }
-            _ => {
-                layer = 0;
-            }
-        }
+        let layer: usize = match track.rid() {
+            simulcast::FULL_RESOLUTION => 2,
+            simulcast::HALF_RESOLUTION => 1,
+            simulcast::QUARTER_RESOLUTION => 0,
+            _ => 0,
+        };
 
         let up_tracks = &mut self.up_tracks.lock().await;
         up_tracks[layer] = Some(track);
@@ -292,22 +283,22 @@ impl Receiver for WebRTCReceiver {
     }
     async fn switch_down_track(&self, track: Arc<DownTrack>, layer: usize) -> Result<()> {
         if self.closed.load(Ordering::Relaxed) {
-            return Err(Error::ErrNoReceiverFound.into());
+            return Err(Error::ErrNoReceiverFound);
         }
 
         if self.available.lock().await[layer].load(Ordering::Relaxed) {
             self.pending[layer].store(true, Ordering::Relaxed);
             self.pending_tracks[layer].lock().await.push(track);
         }
-        return Err(Error::ErrNoReceiverFound.into());
+        Err(Error::ErrNoReceiverFound)
     }
 
     async fn get_bitrate(&self) -> Vec<u64> {
         let mut bitrates = Vec::new();
-        for buff in &*self.buffers.lock().await {
-            if let Some(b) = buff {
-                bitrates.push(b.bitrate().await)
-            }
+        for buff in (*self.buffers.lock().await).iter().flatten() {
+            //if let Some(b) = buff {
+            bitrates.push(buff.bitrate().await)
+            // }
         }
         bitrates
     }
@@ -342,7 +333,7 @@ impl Receiver for WebRTCReceiver {
                 dt.close().await;
                 break;
             }
-            idx = idx + 1;
+            idx += 1;
         }
 
         down_tracks.remove(idx);
@@ -363,8 +354,8 @@ impl Receiver for WebRTCReceiver {
             }
         }
 
-        if let Err(_) = self.rtcp_sender.send(p) {
-            return Err(Error::ErrChannelSend.into());
+        if self.rtcp_sender.send(p).is_err() {
+            return Err(Error::ErrChannelSend);
         }
 
         Ok(())
@@ -410,32 +401,25 @@ impl Receiver for WebRTCReceiver {
 
                             if track.simulcast.lock().await.temporal_supported {
                                 let mime = track.mime().await;
-                                match mime.as_str() {
-                                    "video/vp8" => {
-                                        let mut vp8 = VP8::default();
-
-                                        if vp8.unmarshal(&p.payload).is_err() {
-                                            continue;
-                                        }
-                                        let (tlz0_id, pic_id) = packet.get_vp8_payload_meta();
-                                        helpers::modify_vp8_temporal_payload(
-                                            &mut payload,
-                                            vp8.picture_id_idx as usize,
-                                            vp8.tlz_idx as usize,
-                                            pic_id,
-                                            tlz0_id,
-                                            vp8.mbit,
-                                        )
+                                if mime.as_str() == "video/vp8" {
+                                    let mut vp8 = VP8::default();
+                                    if vp8.unmarshal(&p.payload).is_err() {
+                                        continue;
                                     }
-                                    _ => {}
+                                    let (tlz0_id, pic_id) = packet.get_vp8_payload_meta();
+                                    helpers::modify_vp8_temporal_payload(
+                                        &mut payload,
+                                        vp8.picture_id_idx as usize,
+                                        vp8.tlz_idx as usize,
+                                        pic_id,
+                                        tlz0_id,
+                                        vp8.mbit,
+                                    )
                                 }
                             }
 
-                            match track.write_raw_rtp(p).await {
-                                Ok(_) => {
-                                    track.update_stats(size as u32);
-                                }
-                                Err(_) => {}
+                            if track.write_raw_rtp(p).await.is_ok() {
+                                track.update_stats(size as u32);
                             }
                         }
                         Err(_) => {
@@ -496,8 +480,8 @@ impl Receiver for WebRTCReceiver {
                                 //let mut dt_value = dt.lock().await;
                                 // log::info!("down_track write: {}", dt.id());
                                 if let Err(err) = dt.write_rtp(pkt.clone(), layer).await {
-                                    match err {
-                                        Error::ErrWebRTC(e) => match e {
+                                    if let Error::ErrWebRTC(e) = err {
+                                        match e {
                                             RTCError::ErrClosedPipe
                                             | RTCError::ErrDataChannelNotOpen
                                             | RTCError::ErrConnectionClosed => {
@@ -510,9 +494,7 @@ impl Receiver for WebRTCReceiver {
                                                     .push((layer, dt.id().clone()));
                                             }
                                             _ => {}
-                                        },
-
-                                        _ => {}
+                                        }
                                     }
                                 }
                             }

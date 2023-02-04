@@ -44,13 +44,13 @@ impl AudioObserver {
 
     pub async fn remove_stream(&mut self, stream_id: String) {
         let mut streams = self.streams.lock().await;
-        let mut idx = 0 as usize;
+        let mut idx = 0_usize;
         while idx < streams.len() {
             if streams[idx].id == stream_id {
                 streams.remove(idx);
                 continue;
             }
-            idx = idx + 1;
+            idx += 1;
         }
     }
 
@@ -75,7 +75,7 @@ impl AudioObserver {
             if b.total != a.total {
                 return b.total.cmp(&a.total);
             }
-            return b.sum.cmp(&a.sum);
+            b.sum.cmp(&a.sum)
         });
 
         let mut stream_ids = Vec::new();
@@ -101,6 +101,6 @@ impl AudioObserver {
         }
         self.previous = stream_ids.clone();
 
-        return Some(stream_ids);
+        Some(stream_ids)
     }
 }

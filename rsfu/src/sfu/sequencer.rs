@@ -103,13 +103,10 @@ impl AtomicSequencer {
             sequencer.head_sn = off_sn;
         } else {
             let step = sequencer.step - (sequencer.head_sn - off_sn) as i32;
-            if step < 0 {
-                if step * -1 >= sequencer.max {
-                    return None;
-                }
-
-                //step = step + sequencer.max;
+            if step < 0 && -step >= sequencer.max {
+                return None;
             }
+            //step = step + sequencer.max;
         }
 
         let cur_step = sequencer.step;
@@ -120,7 +117,7 @@ impl AtomicSequencer {
                 source_seq_no: sn,
                 target_seq_no: off_sn,
                 timestamp: timastamp,
-                layer: layer,
+                layer,
                 ..Default::default()
             },
         );
@@ -154,16 +151,16 @@ impl AtomicSequencer {
             let mut step = sequencer.step - (sequencer.head_sn - sn) as i32 - 1;
 
             if step < 0 {
-                if step * -1 >= sequencer.max {
+                if -step >= sequencer.max {
                     continue;
                 }
 
-                step = sequencer.max + step;
+                step += sequencer.max;
             }
 
             let seq = sequencer.seq.get_mut(&step).unwrap();
 
-            if seq.target_seq_no == sn.clone() {
+            if seq.target_seq_no == *sn {
                 if seq.last_nack == 0 || ref_time - seq.last_nack > IGNORE_RETRANSMISSION as u128 {
                     seq.last_nack = ref_time;
                     meta.push(seq.clone());

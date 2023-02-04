@@ -461,12 +461,12 @@ impl Router for RouterLocal {
         let mut recs = Vec::new();
         {
             let mut receivers = self.receivers.lock().await;
-            for (_, receiver) in &mut *receivers {
+            for receiver in (*receivers).values_mut() {
                 recs.push(receiver.clone())
             }
         }
 
-        if recs.len() > 0 {
+        if !recs.is_empty() {
             for val in recs {
                 self.add_down_track(s.clone(), val.clone()).await?;
             }
@@ -548,7 +548,10 @@ impl Router for RouterLocal {
                 let down_track_arc_in = down_track_arc_out.clone();
                 Box::pin(async move {
                     if s_in.pc.connection_state() != RTCPeerConnectionState::Closed {
-                        let rv = s_in.pc.remove_track(&transceiver_in.sender().await.unwrap()).await;
+                        let rv = s_in
+                            .pc
+                            .remove_track(&transceiver_in.sender().await.unwrap())
+                            .await;
                         match rv {
                             Ok(_) => {
                                 s_in.remove_down_track(r_in.stream_id(), down_track_arc_in)
@@ -558,12 +561,11 @@ impl Router for RouterLocal {
                                     log::error!("negotiate err:{} ", err);
                                 }
                             }
-                            Err(err) => match err {
-                                RTCError::ErrConnectionClosed => {
-                                    return;
+                            Err(err) => {
+                                if err == RTCError::ErrConnectionClosed {
+                                    // return;
                                 }
-                                _ => {}
-                            },
+                            }
                         }
                     }
                 })

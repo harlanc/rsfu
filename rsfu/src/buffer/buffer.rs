@@ -230,13 +230,13 @@ impl AtomicBuffer {
             }
             if self.buffer.lock().await.closed {
                 //log::info!("read_extended 0.1");
-                return Err(Error::ErrIOEof.into());
+                return Err(Error::ErrIOEof);
             }
             if codc_type == RTPCodecType::Video {
                 //log::info!("read_extended 1");
             }
             let ext_packets = &mut self.buffer.lock().await.ext_packets;
-            if ext_packets.len() > 0 {
+            if !ext_packets.is_empty() {
                 if codc_type == RTPCodecType::Video {
                     //log::info!("read_extended 1.1");
                 }
@@ -277,17 +277,16 @@ impl AtomicBuffer {
                 let diff = sn - buffer.max_seq_no;
 
                 for i in 1..diff {
-                    let ext_sn: u32;
-
                     let msn = sn - i;
-                    if msn > buffer.max_seq_no
+
+                    let ext_sn: u32 = if msn > buffer.max_seq_no
                         && (msn & 0x8000) > 0
                         && buffer.max_seq_no & 0x8000 == 0
                     {
-                        ext_sn = (buffer.cycles - MAX_SEQUENCE_NUMBER) | msn as u32;
+                        (buffer.cycles - MAX_SEQUENCE_NUMBER) | msn as u32
                     } else {
-                        ext_sn = buffer.cycles | msn as u32;
-                    }
+                        buffer.cycles | msn as u32
+                    };
 
                     if let Some(nacker) = buffer.nacker.as_mut() {
                         nacker.push(ext_sn);
@@ -296,13 +295,12 @@ impl AtomicBuffer {
             }
             buffer.max_seq_no = sn;
         } else if buffer.nack && (distance & 0x8000 > 0) {
-            let ext_sn: u32;
-
-            if sn > buffer.max_seq_no && (sn & 0x8000) > 0 && buffer.max_seq_no & 0x8000 == 0 {
-                ext_sn = (buffer.cycles - MAX_SEQUENCE_NUMBER) | sn as u32;
-            } else {
-                ext_sn = buffer.cycles | sn as u32;
-            }
+            let ext_sn: u32 =
+                if sn > buffer.max_seq_no && (sn & 0x8000) > 0 && buffer.max_seq_no & 0x8000 == 0 {
+                    (buffer.cycles - MAX_SEQUENCE_NUMBER) | sn as u32
+                } else {
+                    buffer.cycles | sn as u32
+                };
             if let Some(nacker) = buffer.nacker.as_mut() {
                 nacker.remove(ext_sn);
             }
@@ -405,7 +403,7 @@ impl AtomicBuffer {
                 d *= -1.0;
             }
 
-            buffer.stats.jitter += (d - buffer.stats.jitter) / 16 as f64;
+            buffer.stats.jitter += (d - buffer.stats.jitter) / 16_f64;
         }
         buffer.last_transit = transit as u32;
         if codc_type == RTPCodecType::Video {
@@ -518,11 +516,11 @@ impl AtomicBuffer {
 
         buffer.stats.total_byte = 0;
 
-        return ReceiverEstimatedMaximumBitrate {
+        ReceiverEstimatedMaximumBitrate {
             bitrate: br as f32,
             ssrcs: vec![buffer.media_ssrc],
             ..Default::default()
-        };
+        }
     }
     #[allow(dead_code)]
     async fn build_reception_report(&self) -> ReceptionReport {
@@ -599,7 +597,7 @@ impl AtomicBuffer {
         let buffer = self.buffer.lock().await;
 
         if buffer.closed {
-            return Err(Error::ErrIOEof.into());
+            return Err(Error::ErrIOEof);
         }
 
         if let Some(bucket) = &buffer.bucket {
@@ -688,7 +686,7 @@ impl BufferIO for AtomicBuffer {
     async fn read(&mut self, buff: &mut [u8]) -> Result<usize> {
         let buffer = self.buffer.lock().await;
         if buffer.closed {
-            return Err(Error::ErrIOEof.into());
+            return Err(Error::ErrIOEof);
         }
 
         let mut n: usize = 0;
@@ -702,7 +700,7 @@ impl BufferIO for AtomicBuffer {
                     .packet
                     .len()
             {
-                return Err(Error::ErrBufferTooSmall.into());
+                return Err(Error::ErrBufferTooSmall);
             }
 
             let packet = &buffer
@@ -729,7 +727,7 @@ impl BufferIO for AtomicBuffer {
 
 // is_timestamp_wrap_around returns true if wrap around happens from timestamp1 to timestamp2
 pub fn is_timestamp_wrap_around(timestamp1: u32, timestamp2: u32) -> bool {
-    return (timestamp1 & 0xC000000 == 0) && (timestamp2 & 0xC000000 == 0xC000000);
+    (timestamp1 & 0xC000000 == 0) && (timestamp2 & 0xC000000 == 0xC000000)
 }
 
 // is_later_timestamp returns true if timestamp1 is later in time than timestamp2 factoring in timestamp wrap-around
@@ -743,5 +741,5 @@ fn is_later_timestamp(timestamp1: u32, timestamp2: u32) -> bool {
     if is_timestamp_wrap_around(timestamp1, timestamp2) {
         return true;
     }
-    return false;
+    false
 }
