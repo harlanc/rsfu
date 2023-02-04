@@ -1,7 +1,6 @@
 pub mod audio_observer;
 pub mod data_channel;
 
-pub mod common;
 pub mod peer;
 pub mod publisher;
 pub mod router;
