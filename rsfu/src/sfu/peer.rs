@@ -122,37 +122,6 @@ impl Peer for PeerLocal {
     }
 }
 
-// fn NewPeer() //-> (impl Peer + Send + Sync)
-// {
-//     //     let p = PeerLocal::new(Arc::new(Mutex::new(SProvider::new())));
-
-//     //     p
-
-//     let p = Arc::new(PeerLocal::new(Arc::new(Mutex::new(SProvider::new()))));
-
-//     let a = Arc::clone(&p) as Arc<dyn Peer + Send + Sync>;
-// }
-
-// struct SProvider {}
-
-// impl SProvider {
-//     fn new() -> Self {
-//         SProvider {}
-//     }
-// }
-
-// impl SessionProvider for SProvider {
-//     async fn get_session(
-//         &mut self,
-//         sid: String,
-//     ) -> (
-//         Option<Arc<Mutex<dyn Session + Send + Sync>>>,
-//         Arc<WebRTCTransportConfig>,
-//     ) {
-//         return (None, Arc::new(WebRTCTransportConfig::default()));
-//     }
-// }
-
 impl PeerLocal {
     pub fn new(provider: Arc<Mutex<dyn SessionProvider + Send + Sync>>) -> PeerLocal {
         let peer_local = PeerLocal {
