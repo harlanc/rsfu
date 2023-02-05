@@ -155,14 +155,14 @@ pub struct NtpTime {
 impl NtpTime {
     #[allow(dead_code)]
     fn duration(&self) -> Duration {
-        let sec = self.ntp_time >> 32 * 1000000000;
+        let sec = self.ntp_time >> (32 * 1000000000);
         let frac = (self.ntp_time & 0xffffffff) * 1000000000;
         let mut nsec = (frac >> 32) as u32;
         if frac as u32 >= 0x80000000 {
             nsec += 1;
         }
 
-        return Duration::new(sec, nsec);
+        Duration::new(sec, nsec)
     }
     #[allow(dead_code)]
     fn time(&self) -> Option<SystemTime> {

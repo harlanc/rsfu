@@ -259,6 +259,7 @@ impl Publisher {
             }));
 
         let pc_clone_out = self.pc.clone();
+
         self.router
             .set_rtcp_writer(Box::new(
                 move |packets: Vec<Box<dyn RtcpPacket + Send + Sync>>| {
@@ -475,8 +476,12 @@ impl Publisher {
                         }
                         if !rpkts.is_empty() {
                             match pc_in.write_rtcp(&pkts[..]).await {
-                                Ok(_) => {}
-                                Err(_) => {}
+                                Ok(size) => {
+                                    log::trace!("write_rtcp successfully: size: {}",size);
+                                }
+                                Err(err) => {
+                                    log::error!("write_rtcp error:{}",err);
+                                }
                             }
                         }
                         Ok(())
@@ -551,8 +556,12 @@ impl Publisher {
             }
 
             match rp.write_rtcp(&rtcp_packets[..]).await {
-                Ok(_) => {}
-                Err(_) => {}
+                Ok(size) => {
+                    log::trace!("write_rtcp size: {}", size);
+                }
+                Err(err) => {
+                    log::error!("write_rtcp error: {}", err);
+                }
             }
             // if self.closed {
             //     return Err(Error::ErrIOEof.into());

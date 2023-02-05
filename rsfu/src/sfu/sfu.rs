@@ -148,18 +148,16 @@ impl WebRTCTransportConfig {
         if let Some(ice_lite) = c.webrtc.candidates.ice_lite {
             if ice_lite {
                 se.set_lite(ice_lite);
-            } else {
-                if let Some(ice_servers_cfg) = &c.webrtc.ice_servers {
-                    for ice_server in ice_servers_cfg {
-                        let s = RTCIceServer {
-                            urls: ice_server.urls.clone(),
-                            username: ice_server.user_name.clone(),
-                            credential: ice_server.credential.clone(),
-                            credential_type: RTCIceCredentialType::Unspecified,
-                        };
+            } else if let Some(ice_servers_cfg) = &c.webrtc.ice_servers {
+                for ice_server in ice_servers_cfg {
+                    let s = RTCIceServer {
+                        urls: ice_server.urls.clone(),
+                        username: ice_server.user_name.clone(),
+                        credential: ice_server.credential.clone(),
+                        credential_type: RTCIceCredentialType::Unspecified,
+                    };
 
-                        ice_servers.push(s);
-                    }
+                    ice_servers.push(s);
                 }
             }
         }

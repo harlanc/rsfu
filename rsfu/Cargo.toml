@@ -1,7 +1,7 @@
 [package]
 name = "rsfu"
-description = "sfu buffer library."
-version = "0.1.0"
+description = "a sfu library."
+version = "0.1.1"
 authors = ["HarlanC <wawacry@qq.com"]
 repository = "https://github.com/harlanc/rsfu"
 license = "MIT"

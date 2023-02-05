@@ -160,11 +160,11 @@ impl AtomicSequencer {
 
             let seq = sequencer.seq.get_mut(&step).unwrap();
 
-            if seq.target_seq_no == *sn {
-                if seq.last_nack == 0 || ref_time - seq.last_nack > IGNORE_RETRANSMISSION as u128 {
-                    seq.last_nack = ref_time;
-                    meta.push(seq.clone());
-                }
+            if seq.target_seq_no == *sn
+                && (seq.last_nack == 0 || ref_time - seq.last_nack > IGNORE_RETRANSMISSION as u128)
+            {
+                seq.last_nack = ref_time;
+                meta.push(seq.clone());
             }
         }
 

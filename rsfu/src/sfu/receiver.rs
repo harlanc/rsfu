@@ -201,12 +201,12 @@ impl Receiver for WebRTCReceiver {
 
         let down_tracks_clone = self.down_tracks.clone();
         let sub_best_quality = |target_layer| async move {
-            for l in 0..target_layer {
-                let mut dts = down_tracks_clone[l].lock().await;
-                if dts.len() == 0 {
+            for down_tracks in down_tracks_clone.iter().take(target_layer) {
+                let mut down_tracks_val = down_tracks.lock().await;
+                if down_tracks_val.is_empty() {
                     continue;
                 }
-                for d in &mut *dts {
+                for d in &mut *down_tracks_val {
                     if let Err(err) = d.switch_spatial_layer(target_layer as i32, false).await {
                         log::error!("switch_spatial_layer err: {}", err);
                     }

@@ -10,6 +10,8 @@ use webrtc::data_channel::RTCDataChannel;
 pub type MessageProcessorFunc = Box<
     dyn (FnMut(ProcessArgs) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>) + Send + Sync,
 >;
+pub type MessageProcessorChainFunc =
+    fn(Arc<Mutex<dyn MessageProcessor + Send>>) -> Arc<Mutex<dyn MessageProcessor + Send>>;
 
 #[derive(Default, Clone)]
 pub struct ProcessArgs {
@@ -25,28 +27,12 @@ pub trait MessageProcessor {
 #[derive(Default)]
 pub struct DataChannel {
     pub label: String,
-    pub middlewares: Arc<
-        Mutex<
-            Vec<
-                fn(
-                    Arc<Mutex<dyn MessageProcessor + Send>>,
-                ) -> Arc<Mutex<dyn MessageProcessor + Send>>,
-            >,
-        >,
-    >,
+    pub middlewares: Arc<Mutex<Vec<MessageProcessorChainFunc>>>,
     pub on_message: Option<fn(args: ProcessArgs)>,
 }
 
 pub struct Middlewares {
-    middlewares: Arc<
-        Mutex<
-            Vec<
-                fn(
-                    Arc<Mutex<dyn MessageProcessor + Send>>,
-                ) -> Arc<Mutex<dyn MessageProcessor + Send>>,
-            >,
-        >,
-    >,
+    middlewares: Arc<Mutex<Vec<MessageProcessorChainFunc>>>,
 }
 pub struct ProcessFunc {
     f: Arc<Mutex<Option<MessageProcessorFunc>>>,
@@ -68,10 +54,7 @@ impl DataChannel {
         }
     }
     #[allow(dead_code)]
-    fn use_middleware(
-        &mut self,
-        f: fn(Arc<Mutex<dyn MessageProcessor + Send>>) -> Arc<Mutex<dyn MessageProcessor + Send>>,
-    ) {
+    fn use_middleware(&mut self, f: MessageProcessorChainFunc) {
         self.middlewares.lock().unwrap().push(f);
     }
     #[allow(dead_code)]
@@ -106,17 +89,7 @@ impl MessageProcessor for ProcessFunc {
 }
 
 impl Middlewares {
-    pub fn new(
-        m: Arc<
-            Mutex<
-                Vec<
-                    fn(
-                        Arc<Mutex<dyn MessageProcessor + Send>>,
-                    ) -> Arc<Mutex<dyn MessageProcessor + Send>>,
-                >,
-            >,
-        >,
-    ) -> Arc<Self> {
+    pub fn new(m: Arc<Mutex<Vec<MessageProcessorChainFunc>>>) -> Arc<Self> {
         Arc::new(Middlewares { middlewares: m })
     }
 
@@ -140,15 +113,7 @@ impl MessageProcessor for ChainHandler {
 }
 
 pub fn chain(
-    mws: Arc<
-        Mutex<
-            Vec<
-                fn(
-                    Arc<Mutex<dyn MessageProcessor + Send>>,
-                ) -> Arc<Mutex<dyn MessageProcessor + Send>>,
-            >,
-        >,
-    >,
+    mws: Arc<Mutex<Vec<MessageProcessorChainFunc>>>,
     last: Arc<Mutex<dyn MessageProcessor + Send>>,
 ) -> Arc<Mutex<dyn MessageProcessor + Send>> {
     let mws_value = mws.lock().unwrap();

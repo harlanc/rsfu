@@ -426,9 +426,9 @@ impl Peer {
         Ok(json_str)
     }
 
-    pub async fn write_rtcp(&self, pkt: &[Box<dyn RtcpPacket + Send + Sync>]) -> Result<()> {
-        self.dtls_transport.write_rtcp(pkt).await?;
-        Ok(())
+    pub async fn write_rtcp(&self, pkt: &[Box<dyn RtcpPacket + Send + Sync>]) -> Result<usize> {
+        let size = self.dtls_transport.write_rtcp(pkt).await?;
+        Ok(size)
     }
 
     pub fn get_local_tracks(&self) -> Vec<Arc<dyn TrackLocal + Send + Sync>> {
