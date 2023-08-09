@@ -5,7 +5,7 @@ use crate::buffer::buffer::ExtPacket;
 use std::sync::atomic::Ordering;
 use webrtc::error::Result;
 
-use std::time::Duration;
+// use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecParameters;
@@ -153,23 +153,23 @@ pub struct NtpTime {
 }
 
 impl NtpTime {
-    #[allow(dead_code)]
-    fn duration(&self) -> Duration {
-        let sec = self.ntp_time >> (32 * 1000000000);
-        let frac = (self.ntp_time & 0xffffffff) * 1000000000;
-        let mut nsec = (frac >> 32) as u32;
-        if frac as u32 >= 0x80000000 {
-            nsec += 1;
-        }
+    // #[allow(dead_code)]
+    // fn duration(&self) -> Duration {
+    //     let sec = self.ntp_time >> (32 * 1000000000);
+    //     let frac = (self.ntp_time & 0xffffffff) * 1000000000;
+    //     let mut nsec = (frac >> 32) as u32;
+    //     if frac as u32 >= 0x80000000 {
+    //         nsec += 1;
+    //     }
 
-        Duration::new(sec, nsec)
-    }
-    #[allow(dead_code)]
-    fn time(&self) -> Option<SystemTime> {
-        let now = SystemTime::now();
+    //     Duration::new(sec, nsec)
+    // }
+    // #[allow(dead_code)]
+    // fn time(&self) -> Option<SystemTime> {
+    //     let now = SystemTime::now();
 
-        now.checked_add(self.duration())
-    }
+    //     now.checked_add(self.duration())
+    // }
 }
 
 impl From<NtpTime> for u64 {
